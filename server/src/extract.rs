@@ -79,6 +79,23 @@ pub fn extract_blocks_accurate(content: &str) -> Vec<MermaidBlock> {
     blocks
 }
 
+/// Treat a bare .mmd file as a single diagram (no fences — like the mermaid CLI).
+/// Returns None for empty/whitespace-only files.
+pub fn extract_mmd_file(content: &str) -> Option<MermaidBlock> {
+    let trimmed_end = content.trim_end_matches(['\r', '\n']);
+    if trimmed_end.trim().is_empty() {
+        return None;
+    }
+    // Line numbers refer to the original content: strip the trailing newline
+    // (which creates a phantom final "" with split) only for line counting.
+    let last_line = trimmed_end.split('\n').count();
+    Some(MermaidBlock {
+        source: trimmed_end.to_string(),
+        line_start: 1,
+        line_end: last_line as u32,
+    })
+}
+
 struct FenceInfo {
     char: char,
     len: usize,
@@ -223,5 +240,20 @@ sequenceDiagram
         let blocks = extract_blocks_accurate(content);
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].source, "flowchart TD\n  A --> B");
+    }
+
+    #[test]
+    fn test_mmd_file_whole_file() {
+        let content = "flowchart TD\n  A --> B\n\n%% comment\n";
+        let block = extract_mmd_file(content).expect("should produce a block");
+        assert_eq!(block.source, "flowchart TD\n  A --> B\n\n%% comment");
+        assert_eq!(block.line_start, 1);
+        assert_eq!(block.line_end, 4);
+    }
+
+    #[test]
+    fn test_mmd_file_empty() {
+        assert!(extract_mmd_file("").is_none());
+        assert!(extract_mmd_file("\n\n").is_none());
     }
 }

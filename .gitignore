@@ -14,3 +14,8 @@ sample.md
 /extension.wasm
 
 __pycache__/
+
+# Browser dev harness fixtures
+dev-fixtures/
+dev-server.pid
+server.log

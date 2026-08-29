@@ -156,26 +156,23 @@ Smooth performance. Themed. Export ready.
   - Section headers per file
   - Toggle: current file only / all open files / entire workspace
 
-- [ ] **Manual Layout**
-  - Drag cards to custom positions
-  - Persist layout (localStorage or server-side)
-  - Lock positions to prevent auto-arrange
+- [~] **Manual Layout**
+  - [x] Drag cards to custom positions (scale-aware, pinned absolutely)
+  - [x] Persist layout in localStorage (pruned when diagrams disappear)
+  - [x] Restore pan/zoom view across sessions
+  - [ ] Lock positions to prevent auto-arrange
 
 - [ ] **Standalone Mode**
   - Run server as CLI: `mermaidview ./docs/`
   - Watches folder for changes
   - Opens browser with all diagrams from folder
   - Works without Zed (any editor)
+  - (dev-proxy exists meanwhile: `python scripts/dev_server.py`)
 
-- [ ] **Search & Filter**
-  - Search diagrams by name, type, or content
-  - Filter by diagram type (flowchart, sequence, etc.)
-  - Filter by source file
-
-- [ ] **Manual Layout**
-  - Drag cards to custom positions
-  - Persist layout (localStorage or server-side)
-  - Lock positions to prevent auto-arrange
+- [~] **Search & Filter**
+  - [x] Search diagrams by name, type, file, or content (`/` focus, Esc clears)
+  - [ ] Dedicated filter dropdowns by type
+  - [ ] Filter by source file
 
 - [ ] **Presentation Mode**
   - Full-screen, one diagram at a time

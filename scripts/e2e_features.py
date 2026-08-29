@@ -34,6 +34,7 @@ SERVER = Path("target/release/mermaid-view-server.exe")
 URI_A = Path("fx-a.md").resolve()
 URI_B = Path("fx-b-crlf.md").resolve()
 URI_C = Path("fx-c-plain.md").resolve()
+URI_MMD = Path("fx-mmd.mmd").resolve()
 
 A_V1 = (
     "# A\n\n"
@@ -398,6 +399,18 @@ def main():
         report("multi-file: two files registered",
                len({x["file"] for x in d2}) == 2)
 
+        # .mmd files: whole file = one diagram (no fences needed)
+        mmd = Path("fx-mmd.mmd").resolve()
+        mmd.write_text("flowchart LR\n  X --> Y\n\n%% tail comment\n", newline="\n")
+        open_doc(lsp, mmd.as_uri(), mmd.read_text(), lang="mermaid")
+        time.sleep(0.4)
+        st, _, body = http_get(port, "/api/diagrams")
+        d2b = json.loads(body)["diagrams"]
+        mmd_diag = next((x for x in d2b if x["file"] == mmd.as_uri()), {})
+        report(".mmd file: whole file is one diagram",
+               mmd_diag.get("lineStart") == 1 and mmd_diag.get("lineEnd") == 4
+               and "X --> Y" in mmd_diag.get("source", ""), str(mmd_diag))
+
         # ---- H. WS init + G. theme from init options ----
         ws = Ws(port)
         msgs = ws.drain(3.0)
@@ -549,6 +562,7 @@ def main():
         Path(URI_A).unlink(missing_ok=True)
         Path(URI_B).unlink(missing_ok=True)
         Path(URI_C).unlink(missing_ok=True)
+        Path(URI_MMD).unlink(missing_ok=True)
 
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

@@ -6,6 +6,10 @@ let diagrams = [];
 let renderCounter = 0;
 let ws = null;
 let reconnectTimeout = null;
+// Set after a card drag so the trailing click/dblclick doesn't fire actions.
+let cardClickSuppressUntil = 0;
+// Active search query (lowercase); empty shows everything.
+let filterQuery = '';
 
 // Render cache keyed by contentHash → { svg, width?, height? }
 const renderCache = new Map();
@@ -17,15 +21,132 @@ const RENDER_DEBOUNCE_MS = 200;
 let visibilityObserver = null;
 const visibleCards = new Set();
 
+// ---- Persisted layout ----
+const LAYOUT_KEY = 'mermaidView.layout.v1';
+const VIEW_KEY = 'mermaidView.view.v1';
+let cardPositions = loadStore(LAYOUT_KEY, {}); // diagram id → {x, y} in canvas coords
+
+function loadStore(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    const value = JSON.parse(raw);
+    return value && typeof value === 'object' ? value : fallback;
+  } catch (err) {
+    return fallback;
+  }
+}
+
+let saveLayoutTimer = null;
+function saveLayout() {
+  clearTimeout(saveLayoutTimer);
+  saveLayoutTimer = setTimeout(() => {
+    try {
+      localStorage.setItem(LAYOUT_KEY, JSON.stringify(cardPositions));
+    } catch (err) {
+      /* storage may be unavailable (private mode); layout stays session-only */
+    }
+  }, 300);
+}
+
+let saveViewTimer = null;
+function saveView() {
+  clearTimeout(saveViewTimer);
+  saveViewTimer = setTimeout(() => {
+    try {
+      localStorage.setItem(VIEW_KEY, JSON.stringify(canvasState));
+    } catch (err) {
+      /* ignore */
+    }
+  }, 300);
+}
+
+// ---- Card dragging ----
+let activeCardDrag = null;
+
+function beginCardDrag(e, card, diagram) {
+  if (e.button !== 0) return;
+  if (e.target.closest('.card-footer') || e.target.closest('button')) return;
+
+  const cardRect = card.getBoundingClientRect();
+  const canvasRect = canvas.getBoundingClientRect();
+  const startX = (cardRect.left - canvasRect.left) / canvasState.scale;
+  const startY = (cardRect.top - canvasRect.top) / canvasState.scale;
+
+  // Promote the grid item to an absolutely positioned card anchored at its
+  // current spot, so the rest of the flow doesn't jump while dragging.
+  card.style.position = 'absolute';
+  card.style.left = `${startX}px`;
+  card.style.top = `${startY}px`;
+  card.style.margin = '0';
+  card.classList.add('card-dragging');
+
+  activeCardDrag = {
+    card,
+    diagram,
+    startX,
+    startY,
+    pointerStart: { x: e.clientX, y: e.clientY },
+    moved: false,
+  };
+  e.preventDefault();
+  e.stopPropagation();
+}
+
+function updateCardDrag(e) {
+  const info = activeCardDrag;
+  if (!info) return;
+  const dx = (e.clientX - info.pointerStart.x) / canvasState.scale;
+  const dy = (e.clientY - info.pointerStart.y) / canvasState.scale;
+  if (!info.moved && Math.hypot(dx, dy) < 4) return;
+  info.moved = true;
+  info.card.style.left = `${info.startX + dx}px`;
+  info.card.style.top = `${info.startY + dy}px`;
+}
+
+function endCardDrag() {
+  const info = activeCardDrag;
+  if (!info) return;
+  activeCardDrag = null;
+  info.card.classList.remove('card-dragging');
+  if (!info.moved) return;
+
+  cardPositions[info.diagram.id] = {
+    x: parseFloat(info.card.style.left) || 0,
+    y: parseFloat(info.card.style.top) || 0,
+  };
+  saveLayout();
+  // Suppress the click-to-source + dblclick-focus the mouseup would trigger.
+  cardClickSuppressUntil = Date.now() + 350;
+}
+
+function resetLayout() {
+  cardPositions = {};
+  saveLayout();
+  canvas
+    .querySelectorAll('.diagram-card')
+    .forEach((card) => {
+      card.style.position = '';
+      card.style.left = '';
+      card.style.top = '';
+      card.style.margin = '';
+    });
+}
+
 // ---- Canvas pan/zoom ----
 const canvasContainer = document.getElementById('canvas-container');
 const canvas = document.getElementById('canvas');
-let canvasState = { x: 0, y: 0, scale: 1 };
+const savedView = loadStore(VIEW_KEY, null);
+let canvasState =
+  savedView && Number.isFinite(savedView.x) && Number.isFinite(savedView.y) && Number.isFinite(savedView.scale)
+    ? { x: savedView.x, y: savedView.y, scale: Math.min(5, Math.max(0.1, savedView.scale)) }
+    : { x: 0, y: 0, scale: 1 };
 let isDragging = false;
 let dragStart = { x: 0, y: 0 };
 
 function updateTransform() {
   canvas.style.transform = `translate(${canvasState.x}px, ${canvasState.y}px) scale(${canvasState.scale})`;
+  saveView();
 }
 
 canvasContainer.addEventListener('mousedown', (e) => {
@@ -35,13 +156,17 @@ canvasContainer.addEventListener('mousedown', (e) => {
 });
 
 window.addEventListener('mousemove', (e) => {
+  if (activeCardDrag) {
+    updateCardDrag(e);
+    return;
+  }
   if (!isDragging) return;
   canvasState.x = e.clientX - dragStart.x;
   canvasState.y = e.clientY - dragStart.y;
   updateTransform();
 });
 
-window.addEventListener('mouseup', () => { isDragging = false; });
+window.addEventListener('mouseup', () => { isDragging = false; endCardDrag(); });
 
 canvasContainer.addEventListener('wheel', (e) => {
   e.preventDefault();
@@ -66,21 +191,55 @@ document.getElementById('btn-reset').addEventListener('click', () => {
 });
 
 function fitAll() {
-  const cards = canvas.querySelectorAll('.diagram-card');
+  const cards = [...canvas.querySelectorAll('.diagram-card')].filter(
+    (c) => !c.classList.contains('hidden')
+  );
   if (cards.length === 0) return;
 
-  const containerRect = canvasContainer.getBoundingClientRect();
+  // Union of card bounds in canvas coordinates (works for flow + pinned cards).
   const canvasRect = canvas.getBoundingClientRect();
-  const scaleX = (containerRect.width - 40) / Math.max(1, canvasRect.width);
-  const scaleY = (containerRect.height - 40) / Math.max(1, canvasRect.height);
-  canvasState.scale = Math.min(scaleX, scaleY, 1);
-  canvasState.x = 20;
-  canvasState.y = 20;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const card of cards) {
+    const r = card.getBoundingClientRect();
+    if (r.width === 0 && r.height === 0) continue;
+    const x = (r.left - canvasRect.left) / canvasState.scale;
+    const y = (r.top - canvasRect.top) / canvasState.scale;
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x + r.width / canvasState.scale);
+    maxY = Math.max(maxY, y + r.height / canvasState.scale);
+  }
+
+  const containerRect = canvasContainer.getBoundingClientRect();
+  const pad = 24;
+  const boundW = Math.max(1, maxX - minX + pad * 2);
+  const boundH = Math.max(1, maxY - minY + pad * 2);
+  canvasState.scale = Math.min(
+    (containerRect.width - 40) / boundW,
+    (containerRect.height - 40) / boundH,
+    1
+  );
+  canvasState.x = 20 - (minX - pad) * canvasState.scale;
+  canvasState.y = 20 - (minY - pad) * canvasState.scale;
   updateTransform();
 }
 
 // Keyboard shortcuts
 document.addEventListener('keydown', (e) => {
+  if (e.target === searchInput) {
+    if (e.key === 'Escape') {
+      searchInput.value = '';
+      applyFilter();
+      searchInput.blur();
+    }
+    return;
+  }
+  if (e.key === '/' || (e.key === 'f' && (e.ctrlKey || e.metaKey))) {
+    e.preventDefault();
+    searchInput.focus();
+    searchInput.select();
+    return;
+  }
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
   if (e.key === 'f' || e.key === 'F') fitAll();
   if (e.key === 'r' || e.key === 'R') {
@@ -131,7 +290,7 @@ function connectWebSocket() {
 
   const socket = new WebSocket(url);
   socket.addEventListener('open', () => {
-    setStatus(`${diagrams.length} diagram${diagrams.length !== 1 ? 's' : ''} (live)`, 'connected');
+    setStatus(liveStatus(' (live)'), 'connected');
     clearTimeout(reconnectTimeout);
   });
 
@@ -169,6 +328,36 @@ function setStatus(text, cls) {
   const status = document.getElementById('status');
   status.textContent = text;
   status.className = cls || '';
+}
+
+// Status reflects the active filter so counts never look broken.
+function liveStatus(suffix = '') {
+  const total = diagrams.length;
+  if (filterQuery) {
+    const shown = canvas.querySelectorAll('.diagram-card:not(.hidden)').length;
+    return `${shown} of ${total} shown${suffix}`;
+  }
+  return `${total} diagram${total !== 1 ? 's' : ''}${suffix}`;
+}
+
+// ---- Search / filter ----
+const searchInput = document.getElementById('search');
+
+searchInput.addEventListener('input', applyFilter);
+
+function applyFilter() {
+  filterQuery = (searchInput.value || '').trim().toLowerCase();
+  const cards = canvas.querySelectorAll('.diagram-card');
+  for (const card of cards) {
+    const diagram = diagrams.find((d) => d.id === card.dataset.diagramId);
+    const hay = diagram
+      ? `title:${extractTitle(diagram.source)} type:${detectDiagramType(diagram.source)} file:${basename(diagram.file)} ${diagram.source}`
+      : '';
+    card.classList.toggle('hidden', Boolean(filterQuery) && !hay.toLowerCase().includes(filterQuery));
+  }
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    setStatus(liveStatus(' (live)'), 'connected');
+  }
 }
 
 function sendToServer(msg) {
@@ -212,7 +401,8 @@ function scheduleDiagramsUpdate(current) {
   }, RENDER_DEBOUNCE_MS));
 }
 
-async function handleDiagramsUpdate(current) {
+// ---- Data handling ----
+function handleDiagramsUpdate(current) {
   const currentIds = new Set(current.map((d) => d.id));
 
   // Remove stale cards
@@ -223,6 +413,12 @@ async function handleDiagramsUpdate(current) {
       visibleCards.delete(card.dataset.diagramId);
     }
   });
+
+  // Prune saved positions for diagrams that no longer exist.
+  for (const id of Object.keys(cardPositions)) {
+    if (!currentIds.has(id)) delete cardPositions[id];
+  }
+  saveLayout();
 
   diagrams = current;
 
@@ -239,7 +435,7 @@ async function handleDiagramsUpdate(current) {
     }
   }
 
-  setStatus(`${current.length} diagram${current.length !== 1 ? 's' : ''}`, 'connected');
+  applyFilter();
 
   if (current.length === 0) {
     canvas.innerHTML = `
@@ -255,8 +451,19 @@ function ensureCardExists(diagram) {
   if (getCard(diagram)) return;
   const card = createCard(diagram);
   canvas.appendChild(card);
+  applySavedPosition(card, diagram);
   ensureVisibilityObserver();
   visibilityObserver.observe(card);
+}
+
+function applySavedPosition(card, diagram) {
+  const pos = cardPositions[diagram.id];
+  if (pos && Number.isFinite(pos.x) && Number.isFinite(pos.y)) {
+    card.style.position = 'absolute';
+    card.style.left = `${pos.x}px`;
+    card.style.top = `${pos.y}px`;
+    card.style.margin = '0';
+  }
 }
 
 function getCard(diagram) {
@@ -345,12 +552,16 @@ function createCard(diagram) {
     </div>
   `;
 
+  card.addEventListener('mousedown', (e) => beginCardDrag(e, card, diagram));
+
   card.addEventListener('click', (e) => {
+    if (Date.now() < cardClickSuppressUntil) return;
     if (e.target.closest('.card-footer')) return;
     sendToServer({ type: 'showDocument', id: diagram.id });
   });
 
   card.addEventListener('dblclick', (e) => {
+    if (Date.now() < cardClickSuppressUntil) return;
     e.stopPropagation();
     focusCard(card, diagram);
   });

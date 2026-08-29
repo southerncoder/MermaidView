@@ -111,6 +111,22 @@ body {
   gap: 20px;
 }
 
+/* Search / filter */
+#search {
+  background: var(--bg-card);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 13px;
+  width: 220px;
+}
+
+#search:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 /* Diagram Cards */
 .diagram-card {
   background: var(--bg-card);
@@ -118,6 +134,24 @@ body {
   border-radius: 8px;
   overflow: hidden;
   transition: border-color 0.2s, box-shadow 0.2s;
+  cursor: grab;
+}
+
+.diagram-card:active {
+  cursor: grabbing;
+}
+
+/* While being dragged to a new position */
+.diagram-card.card-dragging {
+  cursor: grabbing;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  z-index: 50;
+  user-select: none;
+}
+
+/* Hidden by the search filter */
+.diagram-card.hidden {
+  display: none;
 }
 
 .diagram-card:hover {

@@ -8,7 +8,7 @@ use lsp_types::{
     InitializeResult, ServerCapabilities, ServerInfo, TextDocumentSyncKind,
 };
 
-use crate::extract::extract_blocks_accurate;
+use crate::extract::{extract_blocks_accurate, extract_mmd_file};
 use crate::registry::DiagramRegistry;
 use crate::server::SharedTheme;
 use std::sync::{Arc, Mutex};
@@ -260,14 +260,20 @@ impl LspState {
             None => return,
         };
 
-        let blocks = extract_blocks_accurate(&content);
-        let diagram_tuples: Vec<(String, u32, u32)> = blocks
-            .into_iter()
-            .map(|b| (b.source, b.line_start, b.line_end))
-            .collect();
+        // Bare .mmd files are one diagram per file; markdown uses fence matching.
+        let blocks: Vec<(String, u32, u32)> = if is_mermaid(file_uri) {
+            extract_mmd_file(&content)
+                .map(|b| vec![(b.source, b.line_start, b.line_end)])
+                .unwrap_or_default()
+        } else {
+            extract_blocks_accurate(&content)
+                .into_iter()
+                .map(|b| (b.source, b.line_start, b.line_end))
+                .collect()
+        };
 
         let mut reg = self.registry.lock().unwrap();
-        reg.update_file(file_uri, diagram_tuples);
+        reg.update_file(file_uri, blocks);
     }
 
     fn code_actions(&self, params: &CodeActionParams) -> CodeActionResponse {
