@@ -1,0 +1,11 @@
+target/
+*.dll
+*.dylib
+*.so
+*.exe
+/server.log
+/server.pid
+/init.json
+/initialized.json
+/didopen.json
+sample.md

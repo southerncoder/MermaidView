@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MermaidView — Diagram Workspace</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+    <header id="toolbar">
+      <span class="logo">MermaidView</span>
+      <div class="controls">
+        <button id="btn-fit" title="Fit all diagrams (F)">Fit</button>
+        <button id="btn-reset" title="Reset zoom (R)">Reset</button>
+        <span id="status">Connecting...</span>
+      </div>
+    </header>
+
+    <div id="canvas-container">
+      <div id="canvas">
+        <!-- Diagram cards rendered here -->
+      </div>
+    </div>
+  </div>
+
+  <script src="mermaid.min.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

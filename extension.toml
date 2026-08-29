@@ -1,0 +1,18 @@
+id = "mermaid-view"
+name = "MermaidView"
+description = "Mermaid diagram workspace — view all your diagrams on a zoomable canvas with live updates"
+version = "0.1.0"
+schema_version = 1
+authors = ["MermaidView Contributors"]
+repository = "https://github.com/YOUR_USERNAME/mermaid-view"
+
+[compatibility]
+zed = ">=0.210.0"
+
+[language_servers.mermaid-view]
+name = "MermaidView"
+languages = ["Markdown", "Mermaid"]
+
+[language_servers.mermaid-view.language_ids]
+"Markdown" = "markdown"
+"Mermaid" = "mermaid"
