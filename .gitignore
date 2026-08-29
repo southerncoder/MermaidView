@@ -19,3 +19,5 @@ __pycache__/
 dev-fixtures/
 dev-server.pid
 server.log
+dev.log
+dev-err.log

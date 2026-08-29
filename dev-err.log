@@ -1,6 +1,0 @@
-mermaid-view-server v0.1.0 starting
-mermaid-view-server: preview server on http://127.0.0.1:59768 (web dir: web)
-mermaid-view-server: opened preview at http://127.0.0.1:59768
-mermaid-view-server: LSP initializing
-mermaid-view-server: LSP initialized
-mermaid-view-server: main loop started
