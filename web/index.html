@@ -12,9 +12,14 @@
       <span class="logo">MermaidView</span>
       <div class="controls">
         <input id="search" type="text" placeholder="Filter diagrams ( / to focus)" spellcheck="false" />
+        <select id="file-filter" title="Show diagrams for...">
+          <option value="all" selected>All files</option>
+          <option value="__active">Active editor</option>
+        </select>
+        <button id="btn-present" title="Presentation mode (P)">▶ Present</button>
         <button id="btn-fit" title="Fit all diagrams (F)">Fit</button>
         <button id="btn-reset" title="Reset zoom/pan (R)">Reset</button>
-        <button id="btn-reset-layout" title="Clear saved card positions">Layout</button>
+        <button id="btn-reset-layout" title="Return to grouped file layout">Layout</button>
         <span id="status">Connecting...</span>
       </div>
     </header>

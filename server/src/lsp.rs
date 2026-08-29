@@ -10,7 +10,7 @@ use lsp_types::{
 
 use crate::extract::{extract_blocks_accurate, extract_mmd_file};
 use crate::registry::DiagramRegistry;
-use crate::server::SharedTheme;
+use crate::server::{SharedActiveFile, SharedTheme};
 use std::sync::{Arc, Mutex};
 
 /// Main LSP handler state.
@@ -21,6 +21,7 @@ pub struct LspState {
     server_url: Option<String>,
     theme: String,
     theme_handle: SharedTheme,
+    active_file: SharedActiveFile,
 }
 
 impl LspState {
@@ -28,6 +29,7 @@ impl LspState {
         connection: Connection,
         registry: Arc<Mutex<DiagramRegistry>>,
         theme_handle: SharedTheme,
+        active_file: SharedActiveFile,
     ) -> Self {
         Self {
             registry,
@@ -36,6 +38,7 @@ impl LspState {
             server_url: None,
             theme: "dark".to_string(),
             theme_handle,
+            active_file,
         }
     }
 
@@ -234,6 +237,7 @@ impl LspState {
         }
         self.documents
             .insert(file_uri.to_string(), content.to_string());
+        self.set_active_file(file_uri);
         self.update_diagrams(file_uri);
     }
 
@@ -245,7 +249,19 @@ impl LspState {
         if !self.documents.contains_key(file_uri) {
             return;
         }
+        self.set_active_file(file_uri);
         self.update_diagrams(file_uri);
+    }
+
+    /// Remember the most recently opened/edited file (proxy for "current
+    /// editor" — Zed does not emit a focus notification we can use) and
+    /// tell connected browsers.
+    fn set_active_file(&mut self, file_uri: &str) {
+        *self.active_file.lock().unwrap() = Some(file_uri.to_string());
+        self.broadcast_to_browser(serde_json::json!({
+            "type": "activeFile",
+            "file": file_uri,
+        }));
     }
 
     fn document_closed(&mut self, file_uri: &str) {

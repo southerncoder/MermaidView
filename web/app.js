@@ -24,7 +24,15 @@ const visibleCards = new Set();
 // ---- Persisted layout ----
 const LAYOUT_KEY = 'mermaidView.layout.v1';
 const VIEW_KEY = 'mermaidView.view.v1';
+const ARRANGE_KEY = 'mermaidView.arrange.v1';
+const COLLAPSE_KEY = 'mermaidView.collapsed.v1';
 let cardPositions = loadStore(LAYOUT_KEY, {}); // diagram id → {x, y} in canvas coords
+let arrangeMode = loadStore(ARRANGE_KEY, 'grouped') === 'free' ? 'free' : 'grouped';
+let collapsedFiles = loadStore(COLLAPSE_KEY, {}); // file uri → true
+// Active editor file as reported by the server (didOpen/didChange).
+let activeFile = null;
+// File view selection: 'all' | '__active' | specific file uri.
+let fileFilter = 'all';
 
 function loadStore(key, fallback) {
   try {
@@ -47,6 +55,22 @@ function saveLayout() {
       /* storage may be unavailable (private mode); layout stays session-only */
     }
   }, 300);
+}
+
+function saveStore(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (err) {
+    /* ignore */
+  }
+}
+
+function saveArrange() {
+  saveStore(ARRANGE_KEY, arrangeMode);
+}
+
+function saveCollapsed() {
+  saveStore(COLLAPSE_KEY, collapsedFiles);
 }
 
 let saveViewTimer = null;
@@ -73,8 +97,17 @@ function beginCardDrag(e, card, diagram) {
   const startX = (cardRect.left - canvasRect.left) / canvasState.scale;
   const startY = (cardRect.top - canvasRect.top) / canvasState.scale;
 
-  // Promote the grid item to an absolutely positioned card anchored at its
-  // current spot, so the rest of the flow doesn't jump while dragging.
+  // Dragging a grouped card switches the canvas to free (pinned) layout:
+  // that's the "lock in my arrangement" behavior.
+  if (arrangeMode === 'grouped') {
+    arrangeMode = 'free';
+    saveArrange();
+    // Lift this card out of its section into the canvas root.
+    if (card.parentElement !== canvas) canvas.appendChild(card);
+    // Sections that lost all cards get cleaned up on next render.
+  }
+
+  // Promote to an absolutely positioned card anchored at its current spot.
   card.style.position = 'absolute';
   card.style.left = `${startX}px`;
   card.style.top = `${startY}px`;
@@ -123,14 +156,126 @@ function endCardDrag() {
 function resetLayout() {
   cardPositions = {};
   saveLayout();
-  canvas
-    .querySelectorAll('.diagram-card')
-    .forEach((card) => {
-      card.style.position = '';
-      card.style.left = '';
-      card.style.top = '';
-      card.style.margin = '';
+  arrangeMode = 'grouped';
+  saveArrange();
+  renderCanvas();
+}
+
+// ---- Grouped file sections ----
+let sectionRoots = new Map(); // file uri → { section, grid, header }
+
+function fileSectionInfo(uri, diagramsForFile) {
+  let entry = sectionRoots.get(uri);
+  if (!entry || !entry.section.isConnected) {
+    const section = document.createElement('div');
+    section.className = 'file-section';
+    section.dataset.file = uri;
+
+    const header = document.createElement('div');
+    header.className = 'file-header';
+
+    const title = document.createElement('span');
+    title.className = 'file-title';
+    header.appendChild(title);
+
+    const toggle = document.createElement('button');
+    toggle.className = 'file-collapse';
+    toggle.title = 'Collapse/expand this file';
+    header.appendChild(toggle);
+
+    const grid = document.createElement('div');
+    grid.className = 'file-grid';
+
+    section.appendChild(header);
+    section.appendChild(grid);
+
+    header.addEventListener('click', (e) => {
+      if (e.target === toggle) {
+        collapsedFiles[uri] = !collapsedFiles[uri];
+        if (!collapsedFiles[uri]) delete collapsedFiles[uri];
+        saveCollapsed();
+        renderCanvas();
+      }
     });
+
+    entry = { section, grid, header, title, toggle };
+    sectionRoots.set(uri, entry);
+  }
+
+  entry.section.classList.toggle('collapsed', Boolean(collapsedFiles[uri]));
+  entry.title.textContent = `${basename(uri)} · ${diagramsForFile.length} diagram${diagramsForFile.length !== 1 ? 's' : ''}`;
+  entry.toggle.textContent = collapsedFiles[uri] ? '▸' : '▾';
+  return entry;
+}
+
+function renderCanvas() {
+  const visible = visibleDiagrams();
+
+  // Cards are never destroyed on mode switches — re-parent them.
+  if (arrangeMode === 'grouped') {
+    // Clear any leftover free pins from the canvas root.
+    canvas.querySelectorAll(':scope > .diagram-card').forEach((c) => {
+      c.style.position = '';
+      c.style.left = '';
+      c.style.top = '';
+      c.style.margin = '';
+    });
+
+    // Remove stale sections, then (re)build in file order.
+    canvas.querySelectorAll('.file-section').forEach((el) => el.remove());
+    sectionRoots.clear();
+
+    const byFile = new Map();
+    for (const d of visible) {
+      if (!byFile.has(d.file)) byFile.set(d.file, []);
+      byFile.get(d.file).push(d);
+    }
+    // Sort diagrams within each file by line, files by basename:
+    const files = [...byFile.keys()].sort((a, b) =>
+      basename(a).localeCompare(basename(b))
+    );
+    const frag = document.createDocumentFragment();
+    for (const uri of files) {
+      const list = byFile.get(uri).sort((a, b) => a.lineStart - b.lineStart);
+      const entry = fileSectionInfo(uri, list);
+      for (const d of list) {
+        const card = ensureCard(d);
+        entry.grid.appendChild(card);
+      }
+      frag.appendChild(entry.section);
+    }
+    canvas.appendChild(frag);
+  } else {
+    // Free mode: plain positioned canvas, no sections.
+    sectionRoots.clear();
+    canvas.querySelectorAll('.file-section').forEach((el) => el.remove());
+    for (const d of visible) {
+      const card = ensureCard(d);
+      if (card.parentElement !== canvas) canvas.appendChild(card);
+      applySavedPosition(card, d);
+    }
+  }
+
+  if (visible.length === 0) {
+    ensureEmptyState();
+  } else {
+    const emptyState = canvas.querySelector('.empty-state');
+    if (emptyState) emptyState.remove();
+  }
+  refreshCardVisibility();
+  updateStatusFromWs();
+}
+
+function ensureCard(diagram) {
+  let card = getCard(diagram);
+  if (!card) {
+    card = createCard(diagram);
+    canvas.appendChild(card);
+    ensureVisibilityObserver();
+    visibilityObserver.observe(card);
+  }
+  updateCardMeta(card, diagram);
+  return card;
 }
 
 // ---- Canvas pan/zoom ----
@@ -226,6 +371,24 @@ function fitAll() {
 
 // Keyboard shortcuts
 document.addEventListener('keydown', (e) => {
+  if (presentState) {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ') {
+      e.preventDefault();
+      presentStep(1);
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      presentStep(-1);
+    } else if (e.key === 'Home') {
+      presentState.i = 0;
+      renderPresentSlide();
+    } else if (e.key === 'End') {
+      presentState.i = presentState.list.length - 1;
+      renderPresentSlide();
+    } else if (e.key === 'Escape') {
+      closePresentation();
+    }
+    return;
+  }
   if (e.target === searchInput) {
     if (e.key === 'Escape') {
       searchInput.value = '';
@@ -242,6 +405,7 @@ document.addEventListener('keydown', (e) => {
   }
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
   if (e.key === 'f' || e.key === 'F') fitAll();
+  if (e.key === 'p' || e.key === 'P') startPresentation();
   if (e.key === 'r' || e.key === 'R') {
     canvasState = { x: 0, y: 0, scale: 1 };
     updateTransform();
@@ -303,6 +467,11 @@ function connectWebSocket() {
         applyTheme(msg.theme);
         // Re-render visible cards so mermaid theme takes effect
         scheduleDiagramsUpdate(diagrams);
+      } else if (msg.type === 'activeFile') {
+        activeFile = msg.file || null;
+        if (fileFilter === '__active') {
+          renderCanvas();
+        }
       } else if (msg.type === 'highlight') {
         highlightCard(msg.id);
       }
@@ -333,31 +502,102 @@ function setStatus(text, cls) {
 // Status reflects the active filter so counts never look broken.
 function liveStatus(suffix = '') {
   const total = diagrams.length;
-  if (filterQuery) {
-    const shown = canvas.querySelectorAll('.diagram-card:not(.hidden)').length;
+  if (filterQuery || fileFilter !== 'all') {
+    const shown = visibleDiagrams().length;
     return `${shown} of ${total} shown${suffix}`;
   }
   return `${total} diagram${total !== 1 ? 's' : ''}${suffix}`;
 }
 
-// ---- Search / filter ----
-const searchInput = document.getElementById('search');
-
-searchInput.addEventListener('input', applyFilter);
-
-function applyFilter() {
-  filterQuery = (searchInput.value || '').trim().toLowerCase();
-  const cards = canvas.querySelectorAll('.diagram-card');
-  for (const card of cards) {
-    const diagram = diagrams.find((d) => d.id === card.dataset.diagramId);
-    const hay = diagram
-      ? `title:${extractTitle(diagram.source)} type:${detectDiagramType(diagram.source)} file:${basename(diagram.file)} ${diagram.source}`
-      : '';
-    card.classList.toggle('hidden', Boolean(filterQuery) && !hay.toLowerCase().includes(filterQuery));
-  }
+function updateStatusFromWs() {
   if (ws && ws.readyState === WebSocket.OPEN) {
     setStatus(liveStatus(' (live)'), 'connected');
   }
+}
+
+// Diagrams that pass both the search query and the file view selection.
+function visibleDiagrams() {
+  return diagrams.filter((d) => {
+    if (fileFilter === '__active' && activeFile && d.file !== activeFile) return false;
+    if (fileFilter !== 'all' && fileFilter !== '__active' && d.file !== fileFilter) return false;
+    if (filterQuery) {
+      const hay = `title:${extractTitle(d.source)} type:${detectDiagramType(d.source)} file:${basename(d.file)} ${d.source}`;
+      if (!hay.toLowerCase().includes(filterQuery)) return false;
+    }
+    return true;
+  });
+}
+
+function ensureEmptyState() {
+  if (canvas.querySelector('.empty-state')) return;
+  const el = document.createElement('div');
+  el.className = 'empty-state';
+  el.innerHTML = `
+    <h2>No diagrams found</h2>
+    <p>Open a markdown file with mermaid blocks in Zed${fileFilter !== 'all' ? ' — or clear the file filter' : ''}.</p>
+  `;
+  canvas.appendChild(el);
+}
+
+// Apply .hidden + section emptiness for the current filters.
+function refreshCardVisibility() {
+  const visibleIds = new Set(visibleDiagrams().map((d) => d.id));
+  canvas.querySelectorAll('.diagram-card').forEach((card) => {
+    card.classList.toggle('hidden', !visibleIds.has(card.dataset.diagramId));
+  });
+  canvas.querySelectorAll('.file-section').forEach((section) => {
+    const hasVisible = section.querySelector('.diagram-card:not(.hidden)');
+    section.classList.toggle('section-empty', !hasVisible);
+  });
+}
+
+// ---- Search / filter ----
+const searchInput = document.getElementById('search');
+let searchTimer = null;
+
+searchInput.addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(applyFilter, 150);
+});
+
+function applyFilter() {
+  filterQuery = (searchInput.value || '').trim().toLowerCase();
+  renderCanvas();
+}
+
+// ---- File view selection ----
+const fileFilterSelect = document.getElementById('file-filter');
+
+fileFilterSelect.addEventListener('change', () => {
+  fileFilter = fileFilterSelect.value;
+  saveStore('mermaidView.fileFilter.v1', fileFilter);
+  renderCanvas();
+});
+
+function refreshFileOptions() {
+  const prev = fileFilter;
+  const files = [...new Set(diagrams.map((d) => d.file))].sort((a, b) =>
+    basename(a).localeCompare(basename(b))
+  );
+  fileFilterSelect.innerHTML = '';
+  for (const [value, label] of [
+    ['all', `All files (${files.length})`],
+    ['__active', 'Active editor'],
+  ]) {
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = label;
+    fileFilterSelect.appendChild(opt);
+  }
+  for (const uri of files) {
+    const opt = document.createElement('option');
+    opt.value = uri;
+    opt.textContent = basename(uri);
+    fileFilterSelect.appendChild(opt);
+  }
+  // Drop the stale selection if that file no longer exists.
+  fileFilter = [...fileFilterSelect.options].some((o) => o.value === prev) ? prev : 'all';
+  fileFilterSelect.value = fileFilter;
 }
 
 function sendToServer(msg) {
@@ -415,45 +655,22 @@ function handleDiagramsUpdate(current) {
   });
 
   // Prune saved positions for diagrams that no longer exist.
+  const removed = Object.keys(cardPositions).some((id) => !currentIds.has(id));
   for (const id of Object.keys(cardPositions)) {
     if (!currentIds.has(id)) delete cardPositions[id];
   }
-  saveLayout();
+  if (removed) saveLayout();
 
   diagrams = current;
+  refreshFileOptions();
+  renderCanvas();
 
-  // Remove leftover empty-state message once real diagrams exist.
-  const emptyState = canvas.querySelector('.empty-state');
-  if (emptyState) emptyState.remove();
-
-  // Create/update cards and schedule renders
-  for (const diagram of current) {
-    ensureCardExists(diagram);
-    updateCardMeta(getCard(diagram), diagram);
+  // Kick renders for cards in view (sections may have moved them).
+  for (const diagram of diagrams) {
     if (visibleCards.has(diagram.id)) {
       scheduleRender(diagram);
     }
   }
-
-  applyFilter();
-
-  if (current.length === 0) {
-    canvas.innerHTML = `
-      <div class="empty-state">
-        <h2>No diagrams found</h2>
-        <p>Open a markdown file with mermaid blocks in Zed.</p>
-      </div>
-    `;
-  }
-}
-
-function ensureCardExists(diagram) {
-  if (getCard(diagram)) return;
-  const card = createCard(diagram);
-  canvas.appendChild(card);
-  applySavedPosition(card, diagram);
-  ensureVisibilityObserver();
-  visibilityObserver.observe(card);
 }
 
 function applySavedPosition(card, diagram) {
@@ -800,6 +1017,7 @@ async function fetchDiagramsFallback() {
     const resp = await fetch(`${SERVER}/api/diagrams`);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
+    if (data.activeFile) activeFile = data.activeFile;
     return data.diagrams || [];
   } catch (err) {
     console.error('Failed to fetch diagrams:', err);
@@ -813,8 +1031,105 @@ async function loadAndRender() {
   await handleDiagramsUpdate(initial);
 }
 
+// ---- Presentation mode ----
+let presentState = null; // { list, i, overlay, body, title, counter }
+
+const presentBtn = document.getElementById('btn-present');
+presentBtn.addEventListener('click', () => startPresentation());
+
+function startPresentation() {
+  const list = visibleDiagrams();
+  if (list.length === 0) return;
+  if (presentState) return;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'present-overlay';
+  overlay.innerHTML = `
+    <div class="present-toolbar">
+      <span class="present-title"></span>
+      <span class="present-counter"></span>
+      <div class="present-controls">
+        <button class="present-btn" id="present-prev" title="Previous (←)">← Prev</button>
+        <button class="present-btn" id="present-next" title="Next (→)">Next →</button>
+        <button class="present-btn" id="present-close" title="Exit (Esc)">Close (Esc)</button>
+      </div>
+    </div>
+    <div class="present-body"></div>
+    <div class="present-hint">← / → to navigate · Esc to exit · double-click diagram for pan/zoom</div>
+  `;
+  document.body.appendChild(overlay);
+
+  presentState = {
+    list,
+    i: 0,
+    overlay,
+    body: overlay.querySelector('.present-body'),
+    title: overlay.querySelector('.present-title'),
+    counter: overlay.querySelector('.present-counter'),
+  };
+
+  overlay.querySelector('#present-prev').addEventListener('click', () => presentStep(-1));
+  overlay.querySelector('#present-next').addEventListener('click', () => presentStep(1));
+  overlay.querySelector('#present-close').addEventListener('click', closePresentation);
+
+  renderPresentSlide();
+}
+
+async function renderPresentSlide() {
+  const st = presentState;
+  if (!st) return;
+  const diagram = st.list[st.i];
+  if (!diagram) {
+    closePresentation();
+    return;
+  }
+  st.title.textContent = extractTitle(diagram.source);
+  st.counter.textContent = `${st.i + 1} / ${st.list.length}`;
+  st.body.innerHTML = '<div class="present-loading">rendering…</div>';
+
+  try {
+    let svg = null;
+    // Reuse a rendered card body when we already have it.
+    const card = getCard(diagram);
+    const cardSvg = card && card.querySelector('.card-body svg');
+    if (cardSvg) {
+      svg = cardSvg.outerHTML;
+    } else {
+      const result = await mermaid.render(`present-${renderCounter++}`, diagram.source);
+      svg = result.svg;
+      if (diagram.contentHash) renderCache.set(diagram.contentHash, svg);
+    }
+    // Slide may have changed while rendering.
+    if (!presentState || presentState.list[presentState.i] !== diagram) return;
+    st.body.innerHTML = svg;
+    const el = st.body.querySelector('svg');
+    if (el) enableSvgPanZoom(el, st.body);
+  } catch (err) {
+    st.body.innerHTML = `<p class="card-error">${escapeHtml(err.message || String(err))}</p>`;
+  }
+}
+
+function presentStep(delta) {
+  const st = presentState;
+  if (!st) return;
+  st.i = Math.min(st.list.length - 1, Math.max(0, st.i + delta));
+  renderPresentSlide();
+}
+
+function closePresentation() {
+  if (!presentState) return;
+  document.removeEventListener('keydown', presentState._keys);
+  presentState.overlay.remove();
+  presentState = null;
+}
+
 // ---- Init ----
 document.addEventListener('DOMContentLoaded', () => {
+  fileFilter = loadStore('mermaidView.fileFilter.v1', 'all');
+  if (fileFilter === '__active') {
+    // Falls back gracefully if the server hasn't set an active file yet.
+    fileFilterSelect.value = fileFilter;
+  }
   applyTheme('dark');
   initMermaid();
   loadAndRender();

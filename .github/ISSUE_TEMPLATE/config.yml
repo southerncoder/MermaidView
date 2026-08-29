@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/southerncoder/MermaidView/blob/main/README.md
+    about: Please review our README for usage instructions.

@@ -141,6 +141,50 @@ body {
   cursor: grabbing;
 }
 
+/* Grouped file sections */
+.file-section {
+  min-width: 400px;
+}
+
+.file-section.section-empty {
+  display: none;
+}
+
+.file-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 4px;
+  color: var(--fg-muted);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border-bottom: 1px dashed var(--border);
+  margin-bottom: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.file-header:hover {
+  color: var(--accent);
+}
+
+.file-collapse {
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 4px;
+}
+
+.file-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+  gap: 20px;
+}
+
 /* While being dragged to a new position */
 .diagram-card.card-dragging {
   cursor: grabbing;
@@ -260,6 +304,83 @@ body {
 
 .empty-state h2 {
   font-weight: 400;
+}
+
+/* Presentation mode */
+.present-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.92);
+  z-index: 900;
+  display: flex;
+  flex-direction: column;
+}
+
+.present-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--bg-toolbar);
+  border-bottom: 1px solid var(--border);
+}
+
+.present-title {
+  font-weight: 500;
+  color: var(--fg);
+}
+
+.present-counter {
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-muted);
+}
+
+.present-controls {
+  display: flex;
+  gap: 8px;
+}
+
+.present-btn {
+  background: var(--bg-card);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.present-btn:hover {
+  background: var(--card-hover);
+}
+
+.present-body {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.present-body svg {
+  max-width: none;
+  max-height: none;
+  width: auto;
+  height: auto;
+}
+
+.present-loading {
+  color: var(--fg-muted);
+  font-size: 14px;
+}
+
+.present-hint {
+  text-align: center;
+  color: var(--fg-muted);
+  font-size: 12px;
+  padding: 8px;
 }
 
 /* Focus mode */

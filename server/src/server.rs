@@ -13,6 +13,10 @@ use crate::registry::DiagramRegistry;
 /// (reader), so new browser connections get the current value.
 pub type SharedTheme = Arc<Mutex<String>>;
 
+/// Shared active-file state: set by the LSP handler (writer), read by the
+/// HTTP API ("current file" view) and forwarded to the browser on change.
+pub type SharedActiveFile = Arc<Mutex<Option<String>>>;
+
 /// HTTP server that serves the preview app and provides diagram data via REST
 /// and WebSocket.
 pub struct PreviewServer {
@@ -21,6 +25,7 @@ pub struct PreviewServer {
     base_dir: String,
     lsp_sender: Arc<Mutex<Sender<Message>>>,
     theme: SharedTheme,
+    active_file: SharedActiveFile,
 }
 
 impl PreviewServer {
@@ -28,6 +33,7 @@ impl PreviewServer {
         registry: Arc<Mutex<DiagramRegistry>>,
         lsp_sender: Sender<Message>,
         theme: SharedTheme,
+        active_file: SharedActiveFile,
     ) -> Self {
         Self {
             port: 0,
@@ -35,21 +41,34 @@ impl PreviewServer {
             base_dir: find_web_dir(),
             lsp_sender: Arc::new(Mutex::new(lsp_sender)),
             theme,
+            active_file,
         }
     }
 
-    /// Start the server on a background thread. Returns the assigned port.
+    /// Start the server on an ephemeral port. Returns the assigned port.
     pub fn start(&mut self) -> anyhow::Result<u16> {
-        let listener = TcpListener::bind("127.0.0.1:0")
-            .map_err(|e| anyhow::anyhow!("Failed to bind HTTP server: {e}"))?;
+        self.start_on(0)
+    }
+
+    /// Start the server. Port 0 picks an ephemeral port.
+    pub fn start_on(&mut self, port: u16) -> anyhow::Result<u16> {
+        let listener = TcpListener::bind(("127.0.0.1", port))
+            .map_err(|e| anyhow::anyhow!("Failed to bind HTTP server on 127.0.0.1:{port}: {e}"))?;
 
         let port = listener.local_addr()?.port();
         self.port = port;
 
+        self.spawn_serve(listener, port)?;
+
+        Ok(port)
+    }
+
+    fn spawn_serve(&mut self, listener: TcpListener, port: u16) -> anyhow::Result<()> {
         let registry = Arc::clone(&self.registry);
         let base_dir = self.base_dir.clone();
         let lsp_sender = Arc::clone(&self.lsp_sender);
         let theme = Arc::clone(&self.theme);
+        let active_file = Arc::clone(&self.active_file);
         let request_counter = AtomicU64::new(1);
 
         thread::spawn(move || {
@@ -63,10 +82,11 @@ impl PreviewServer {
                 lsp_sender,
                 request_counter,
                 theme,
+                active_file,
             );
         });
 
-        Ok(port)
+        Ok(())
     }
 
     fn serve(
@@ -76,6 +96,7 @@ impl PreviewServer {
         lsp_sender: Arc<Mutex<Sender<Message>>>,
         request_counter: AtomicU64,
         theme: SharedTheme,
+        active_file: SharedActiveFile,
     ) {
         for stream in listener.incoming() {
             match stream {
@@ -85,6 +106,7 @@ impl PreviewServer {
                     let lsp_sender = Arc::clone(&lsp_sender);
                     let counter = AtomicU64::new(request_counter.fetch_add(1, Ordering::SeqCst));
                     let theme = Arc::clone(&theme);
+                    let active_file = Arc::clone(&active_file);
                     thread::spawn(move || {
                         if let Err(e) = Self::handle_connection(
                             &mut stream,
@@ -93,6 +115,7 @@ impl PreviewServer {
                             &lsp_sender,
                             &counter,
                             &theme,
+                            &active_file,
                         ) {
                             eprintln!("mermaid-view-server: connection error: {e}");
                         }
@@ -110,6 +133,7 @@ impl PreviewServer {
         lsp_sender: &Arc<Mutex<Sender<Message>>>,
         request_counter: &AtomicU64,
         theme: &SharedTheme,
+        active_file: &SharedActiveFile,
     ) -> anyhow::Result<()> {
         // Read the full HTTP request headers (up to the blank line)
         let mut buf = [0u8; 8192];
@@ -146,11 +170,13 @@ impl PreviewServer {
                 lsp_sender,
                 request_counter,
                 theme,
+                active_file,
             );
             return Ok(());
         }
 
-        let (status, content_type, body) = Self::handle_http_request(path, registry, base_dir);
+        let (status, content_type, body) =
+            Self::handle_http_request(path, registry, base_dir, active_file);
 
         let response = format!(
             "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
@@ -166,6 +192,7 @@ impl PreviewServer {
         path: &str,
         registry: &Arc<Mutex<DiagramRegistry>>,
         base_dir: &str,
+        active_file: &SharedActiveFile,
     ) -> (&'static str, &'static str, String) {
         let web_path = |file: &str| std::path::Path::new(base_dir).join(file);
         match path {
@@ -205,6 +232,7 @@ impl PreviewServer {
             },
             "/api/diagrams" => {
                 let reg = registry.lock().unwrap();
+                let active_file = active_file.lock().unwrap().clone();
                 let diagrams: Vec<serde_json::Value> = reg
                     .all_diagrams()
                     .iter()
@@ -220,7 +248,10 @@ impl PreviewServer {
                     })
                     .collect();
 
-                let body = serde_json::json!({ "diagrams": diagrams });
+                let body = serde_json::json!({
+                    "diagrams": diagrams,
+                    "activeFile": active_file,
+                });
                 (
                     "200 OK",
                     "application/json",
@@ -242,6 +273,7 @@ impl PreviewServer {
         lsp_sender: &Arc<Mutex<Sender<Message>>>,
         request_counter: &AtomicU64,
         theme: &SharedTheme,
+        active_file: &SharedActiveFile,
     ) {
         // Extract Sec-WebSocket-Key
         let key = request
@@ -311,6 +343,16 @@ impl PreviewServer {
                 .into(),
         )) {
             eprintln!("mermaid-view-server: ws theme send error: {e}");
+        }
+
+        // And the active file snapshot for the "current file" view.
+        let current_active = active_file.lock().unwrap().clone();
+        if let Err(e) = ws.send(tungstenite::Message::Text(
+            serde_json::json!({"type": "activeFile", "file": current_active})
+                .to_string()
+                .into(),
+        )) {
+            eprintln!("mermaid-view-server: ws activeFile send error: {e}");
         }
 
         let lsp_sender = Arc::clone(lsp_sender);

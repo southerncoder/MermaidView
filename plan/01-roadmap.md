@@ -129,9 +129,7 @@ quality.
 
 - [x] **Export**
   - Download individual diagram as SVG
-  - Download individual diagram as PNG (canvas-based)
-
-- [~] **Zed settings schema**
+  - Download individual diagram as PNG (canvas-based- [~] **Zed settings schema**
   - [x] Theme overridable via `lsp.mermaid-view.settings` (extension passes workspace config + init options)
   - [ ] Document the setting in README
 
