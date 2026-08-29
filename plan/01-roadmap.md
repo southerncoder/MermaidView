@@ -104,36 +104,44 @@ with pan/zoom. Live updates.
 quality.
 
 **Tasks:**
+- [x] **Click-to-Source Navigation**
+  - Click card in browser → WebSocket `showDocument` → server →
+    `window/showDocument` request to Zed → navigate to source
 
-- [ ] **Source-to-Diagram Highlight**
-  - Cursor in mermaid block in Zed → corresponding card highlighted
-  - Uses LSP textDocument/onDidChangeTextDocument + cursor position
+- [x] **Source-to-Diagram Highlight**
+  - Code action "Highlight Diagram in Workspace" when cursor is inside a block
+  - Highlights the corresponding card in the browser
 
-- [ ] **Rendering Performance**
-  - Lazy rendering: only render visible cards (IntersectionObserver)
+- [x] **Rendering Performance**
+  - Lazy rendering: only render visible cards (IntersectionObserver, 200px buffer)
   - Debounced re-render (200ms)
-  - Render queue: avoid blocking on slow diagrams
   - Caching: mermaid.js render results by content hash
 
-- [ ] **Error Handling & UX**
+- [x] **Error Handling & UX**
   - mermaid.js parse errors shown in card (red border, message)
-  - Server not running → clear error in Zed
   - Browser connection lost → auto-reconnect WebSocket
-  - Port already in use → find alternative port
 
-- [ ] **Theme Integration**
-  - Detect Zed theme via LSP configuration
-  - Push to browser via WebSocket
-  - Light/dark CSS variables
-  - Mermaid theme config (default, dark, forest, neutral)
+- [x] **Theme Integration**
+  - LSP handles `workspace/didChangeConfiguration`
+  - Pushes `theme` message via WebSocket
+  - Light/dark CSS variables applied to document
+  - Mermaid theme config updated
 
-- [ ] **Export**
+- [x] **Export**
   - Download individual diagram as SVG
-  - Download individual diagram as PNG
-  - Download all diagrams (ZIP, future)
+  - Download individual diagram as PNG (canvas-based)
+
+- [ ] **Zed settings schema**
+  - Register `mermaidView.theme` setting so users can override
+  - Document in README
+
+- [ ] **Port fallback / error UX**
+  - Port already in use → find alternative port
+  - Surface server start failures to Zed
 
 **Deliverable:** Click a diagram → Zed jumps to source. Cursor in
-source → corresponding card highlights. Smooth performance. Themed.
+source → run "Highlight Diagram in Workspace" to focus the card.
+Smooth performance. Themed. Export ready.
 
 ---
 
@@ -143,10 +151,15 @@ source → corresponding card highlights. Smooth performance. Themed.
 
 **Tasks:**
 
-- [ ] **Multi-File Workspace View**
+- [x] **Multi-File Workspace View**
   - Show diagrams from all open files, grouped by file
   - Section headers per file
   - Toggle: current file only / all open files / entire workspace
+
+- [ ] **Manual Layout**
+  - Drag cards to custom positions
+  - Persist layout (localStorage or server-side)
+  - Lock positions to prevent auto-arrange
 
 - [ ] **Standalone Mode**
   - Run server as CLI: `mermaidview ./docs/`

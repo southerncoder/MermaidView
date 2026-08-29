@@ -20,16 +20,19 @@ fn main() -> anyhow::Result<()> {
     let registry = Arc::new(Mutex::new(DiagramRegistry::new()));
 
     // Start the preview server
-    let mut preview = server::PreviewServer::new(Arc::clone(&registry), connection.sender.clone());
+    let theme = "dark".to_string();
+    let mut preview =
+        server::PreviewServer::new(Arc::clone(&registry), connection.sender.clone(), theme);
     let port = preview.start()?;
     let url = format!("http://127.0.0.1:{port}");
 
     // Open the preview in the browser
     open_browser(&url);
 
-    // Initialize LSP state with server URL
+    // Initialize LSP state with server URL and initial theme
     let mut lsp_state = lsp::LspState::new(connection, registry);
     lsp_state.set_server_url(url);
+    lsp_state.set_theme("dark".to_string());
 
     // Run the LSP main loop
     lsp_state.main_loop()?;

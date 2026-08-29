@@ -117,15 +117,16 @@ body {
   border: 1px solid var(--border);
   border-radius: 8px;
   overflow: hidden;
-  transition: border-color 0.2s;
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
 
 .diagram-card:hover {
   border-color: var(--accent);
 }
 
-.diagram-card.error {
-  border-color: var(--error);
+.diagram-card.highlighted {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(137, 180, 250, 0.4);
 }
 
 .card-header {
@@ -183,11 +184,32 @@ body {
   height: auto;
 }
 
-.card-error {
-  padding: 12px;
-  color: var(--error);
-  font-size: 12px;
-  font-family: monospace;
+.card-footer {
+  display: none;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-toolbar);
+}
+
+.diagram-card:hover .card-footer {
+  display: flex;
+}
+
+.card-btn {
+  background: var(--bg-card);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.card-btn:hover {
+  background: var(--card-hover);
 }
 
 /* Empty state */

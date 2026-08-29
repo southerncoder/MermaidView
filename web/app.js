@@ -7,6 +7,16 @@ let renderCounter = 0;
 let ws = null;
 let reconnectTimeout = null;
 
+// Render cache keyed by contentHash → { svg, width?, height? }
+const renderCache = new Map();
+// Pending render debounce timers keyed by diagram id
+const renderTimers = new Map();
+const RENDER_DEBOUNCE_MS = 200;
+
+// IntersectionObserver for lazy rendering
+let visibilityObserver = null;
+const visibleCards = new Set();
+
 // ---- Canvas pan/zoom ----
 const canvasContainer = document.getElementById('canvas-container');
 const canvas = document.getElementById('canvas');
@@ -87,12 +97,27 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+// ---- Theme ----
+function applyTheme(theme) {
+  if (theme === 'light' || theme === 'dark') {
+    document.documentElement.setAttribute('data-theme', theme);
+    if (typeof mermaid !== 'undefined') {
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: theme === 'light' ? 'default' : 'dark',
+        securityLevel: 'loose',
+      });
+    }
+  }
+}
+
 // ---- Mermaid initialization ----
 function initMermaid() {
   if (typeof mermaid !== 'undefined') {
+    const theme = document.documentElement.getAttribute('data-theme') || 'dark';
     mermaid.initialize({
       startOnLoad: false,
-      theme: document.documentElement.getAttribute('data-theme') === 'light' ? 'default' : 'dark',
+      theme: theme === 'light' ? 'default' : 'dark',
       securityLevel: 'loose',
     });
     console.log('Mermaid initialized');
@@ -114,7 +139,13 @@ function connectWebSocket() {
     try {
       const msg = JSON.parse(event.data);
       if (msg.type === 'init' || msg.type === 'update') {
-        handleDiagramsUpdate(msg.diagrams || []);
+        scheduleDiagramsUpdate(msg.diagrams || []);
+      } else if (msg.type === 'theme') {
+        applyTheme(msg.theme);
+        // Re-render visible cards so mermaid theme takes effect
+        scheduleDiagramsUpdate(diagrams);
+      } else if (msg.type === 'highlight') {
+        highlightCard(msg.id);
       }
     } catch (err) {
       console.error('Invalid WS message:', event.data, err);
@@ -146,18 +177,109 @@ function sendToServer(msg) {
   }
 }
 
-// ---- Diagram rendering ----
-async function renderDiagram(diagram) {
-  const cardId = `card-${diagram.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-  let card = document.getElementById(cardId);
+// ---- Lazy rendering visibility ----
+function ensureVisibilityObserver() {
+  if (visibilityObserver) return;
+  visibilityObserver = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      const card = entry.target;
+      const id = card.dataset.diagramId;
+      if (entry.isIntersecting) {
+        visibleCards.add(id);
+        const diagram = diagrams.find((d) => d.id === id);
+        if (diagram) {
+          scheduleRender(diagram);
+        }
+      } else {
+        visibleCards.delete(id);
+      }
+    }
+  }, {
+    root: canvasContainer,
+    rootMargin: '200px',
+  });
+}
 
-  if (!card) {
-    card = createCard(diagram);
-    card.id = cardId;
-    canvas.appendChild(card);
+// ---- Data handling ----
+function scheduleDiagramsUpdate(current) {
+  // Debounce the whole update batch
+  if (renderTimers.has('_update')) {
+    clearTimeout(renderTimers.get('_update'));
+  }
+  renderTimers.set('_update', setTimeout(() => {
+    handleDiagramsUpdate(current);
+    renderTimers.delete('_update');
+  }, RENDER_DEBOUNCE_MS));
+}
+
+async function handleDiagramsUpdate(current) {
+  const currentIds = new Set(current.map((d) => d.id));
+
+  // Remove stale cards
+  canvas.querySelectorAll('.diagram-card').forEach((card) => {
+    if (!currentIds.has(card.dataset.diagramId)) {
+      card.remove();
+      renderCache.delete(card.dataset.diagramId);
+      visibleCards.delete(card.dataset.diagramId);
+    }
+  });
+
+  diagrams = current;
+
+  // Create/update cards and schedule renders
+  for (const diagram of current) {
+    ensureCardExists(diagram);
+    updateCardMeta(getCard(diagram), diagram);
+    if (visibleCards.has(diagram.id)) {
+      scheduleRender(diagram);
+    }
   }
 
-  updateCardMeta(card, diagram);
+  setStatus(`${current.length} diagram${current.length !== 1 ? 's' : ''}`, 'connected');
+
+  if (current.length === 0) {
+    canvas.innerHTML = `
+      <div class="empty-state">
+        <h2>No diagrams found</h2>
+        <p>Open a markdown file with mermaid blocks in Zed.</p>
+      </div>
+    `;
+  }
+}
+
+function ensureCardExists(diagram) {
+  if (getCard(diagram)) return;
+  const card = createCard(diagram);
+  canvas.appendChild(card);
+  ensureVisibilityObserver();
+  visibilityObserver.observe(card);
+}
+
+function getCard(diagram) {
+  const cardId = cardIdFor(diagram.id);
+  return document.getElementById(cardId);
+}
+
+function cardIdFor(id) {
+  return `card-${id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+}
+
+function scheduleRender(diagram) {
+  const existing = renderTimers.get(diagram.id);
+  if (existing) clearTimeout(existing);
+  renderTimers.set(
+    diagram.id,
+    setTimeout(() => {
+      renderDiagram(diagram);
+      renderTimers.delete(diagram.id);
+    }, RENDER_DEBOUNCE_MS)
+  );
+}
+
+// ---- Diagram rendering ----
+async function renderDiagram(diagram) {
+  const card = getCard(diagram);
+  if (!card) return;
 
   card.classList.add('card-rendering');
   const body = card.querySelector('.card-body');
@@ -169,8 +291,20 @@ async function renderDiagram(diagram) {
       return;
     }
 
+    // Cache hit: identical content already rendered
+    if (diagram.contentHash && renderCache.has(diagram.contentHash)) {
+      body.innerHTML = renderCache.get(diagram.contentHash);
+      card.classList.remove('error', 'card-rendering');
+      return;
+    }
+
     const renderId = `mermaid-${renderCounter++}`;
     const { svg } = await mermaid.render(renderId, diagram.source);
+
+    if (diagram.contentHash) {
+      renderCache.set(diagram.contentHash, svg);
+    }
+
     body.innerHTML = svg;
     card.classList.remove('error', 'card-rendering');
   } catch (err) {
@@ -185,6 +319,7 @@ async function renderDiagram(diagram) {
 function createCard(diagram) {
   const card = document.createElement('div');
   card.className = 'diagram-card';
+  card.id = cardIdFor(diagram.id);
   card.dataset.diagramId = diagram.id;
   card.title = 'Click to open source in Zed. Double-click to focus.';
 
@@ -200,15 +335,29 @@ function createCard(diagram) {
       <span class="card-meta">${escapeHtml(basename(diagram.file))}:${diagram.lineStart}-${diagram.lineEnd}</span>
     </div>
     <div class="card-body"></div>
+    <div class="card-footer">
+      <button class="card-btn export-svg" title="Download SVG">SVG</button>
+      <button class="card-btn export-png" title="Download PNG">PNG</button>
+    </div>
   `;
 
-  card.addEventListener('click', () => {
+  card.addEventListener('click', (e) => {
+    if (e.target.closest('.card-footer')) return;
     sendToServer({ type: 'showDocument', id: diagram.id });
   });
 
   card.addEventListener('dblclick', (e) => {
     e.stopPropagation();
     focusCard(card, diagram);
+  });
+
+  card.querySelector('.export-svg').addEventListener('click', (e) => {
+    e.stopPropagation();
+    exportSvg(diagram, card);
+  });
+  card.querySelector('.export-png').addEventListener('click', (e) => {
+    e.stopPropagation();
+    exportPng(diagram, card);
   });
 
   return card;
@@ -224,6 +373,70 @@ function updateCardMeta(card, diagram) {
     `${basename(diagram.file)}:${diagram.lineStart}-${diagram.lineEnd}`;
 }
 
+function highlightCard(id) {
+  const card = document.getElementById(cardIdFor(id));
+  if (!card) return;
+  card.classList.add('highlighted');
+  card.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+  setTimeout(() => card.classList.remove('highlighted'), 2000);
+}
+
+// ---- Export ----
+function exportSvg(diagram, card) {
+  const svg = card.querySelector('.card-body svg');
+  if (!svg) return;
+  const blob = new Blob([svg.outerHTML], { type: 'image/svg+xml;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${safeFilename(diagram)}.svg`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function exportPng(diagram, card) {
+  const svg = card.querySelector('.card-body svg');
+  if (!svg) return;
+  const rect = svg.getBoundingClientRect();
+  const width = Math.max(1, Math.floor(rect.width || svg.viewBox.baseVal.width || 400));
+  const height = Math.max(1, Math.floor(rect.height || svg.viewBox.baseVal.height || 300));
+
+  const canvasEl = document.createElement('canvas');
+  canvasEl.width = width;
+  canvasEl.height = height;
+  const ctx = canvasEl.getContext('2d');
+
+  const svgData = new XMLSerializer().serializeToString(svg);
+  const img = new Image();
+  const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+
+  img.onload = () => {
+    ctx.drawImage(img, 0, 0, width, height);
+    URL.revokeObjectURL(url);
+    canvasEl.toBlob((pngBlob) => {
+      if (!pngBlob) return;
+      const pngUrl = URL.createObjectURL(pngBlob);
+      const a = document.createElement('a');
+      a.href = pngUrl;
+      a.download = `${safeFilename(diagram)}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(pngUrl);
+    });
+  };
+  img.src = url;
+}
+
+function safeFilename(diagram) {
+  const title = extractTitle(diagram.source);
+  const base = basename(diagram.file).replace(/\.[^.]+$/, '');
+  return `${base}-${title}`.replace(/[^a-zA-Z0-9_-]+/g, '-').substring(0, 60);
+}
+
 // ---- Focus mode ----
 let focusOverlay = null;
 
@@ -235,7 +448,11 @@ function focusCard(card, diagram) {
   overlay.innerHTML = `
     <div class="focus-toolbar">
       <span class="focus-title">${escapeHtml(extractTitle(diagram.source))}</span>
-      <button class="focus-btn" id="focus-close">Close (Esc)</button>
+      <div>
+        <button class="focus-btn export-svg" id="focus-export-svg">SVG</button>
+        <button class="focus-btn export-png" id="focus-export-png">PNG</button>
+        <button class="focus-btn" id="focus-close">Close (Esc)</button>
+      </div>
     </div>
     <div class="focus-body"></div>
   `;
@@ -250,6 +467,8 @@ function focusCard(card, diagram) {
   if (svg) enableSvgPanZoom(svg, focusBody);
 
   overlay.querySelector('#focus-close').addEventListener('click', closeFocus);
+  overlay.querySelector('#focus-export-svg').addEventListener('click', () => exportSvg(diagram, card));
+  overlay.querySelector('#focus-export-png').addEventListener('click', () => exportPng(diagram, card));
   overlay.addEventListener('click', (e) => {
     if (e.target === overlay) closeFocus();
   });
@@ -360,7 +579,7 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
-// ---- Data handling ----
+// ---- Fallback data fetch ----
 async function fetchDiagramsFallback() {
   try {
     const resp = await fetch(`${SERVER}/api/diagrams`);
@@ -373,34 +592,6 @@ async function fetchDiagramsFallback() {
   }
 }
 
-async function handleDiagramsUpdate(current) {
-  const currentIds = new Set(current.map(d => d.id));
-
-  // Remove stale cards
-  canvas.querySelectorAll('.diagram-card').forEach(card => {
-    if (!currentIds.has(card.dataset.diagramId)) {
-      card.remove();
-    }
-  });
-
-  // Render all diagrams (existing ones are cheap because mermaid is cached)
-  for (const diagram of current) {
-    await renderDiagram(diagram);
-  }
-
-  diagrams = current;
-  setStatus(`${current.length} diagram${current.length !== 1 ? 's' : ''}`, 'connected');
-
-  if (current.length === 0) {
-    canvas.innerHTML = `
-      <div class="empty-state">
-        <h2>No diagrams found</h2>
-        <p>Open a markdown file with mermaid blocks in Zed.</p>
-      </div>
-    `;
-  }
-}
-
 async function loadAndRender() {
   setStatus('Loading diagrams...', '');
   const initial = await fetchDiagramsFallback();
@@ -409,6 +600,7 @@ async function loadAndRender() {
 
 // ---- Init ----
 document.addEventListener('DOMContentLoaded', () => {
+  applyTheme('dark');
   initMermaid();
   loadAndRender();
   connectWebSocket();

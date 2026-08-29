@@ -48,8 +48,6 @@ impl DiagramRegistry {
         (id, rx)
     }
 
-    /// Subscribe to diagram changes. Returns a receiver on a new channel and
-    /// immediately sends the current state.
     /// Update diagrams for a specific file. Returns list of changed diagram IDs.
     pub fn update_file(
         &mut self,
@@ -131,6 +129,11 @@ impl DiagramRegistry {
             .collect()
     }
 
+    pub fn notify_custom(&mut self, payload: String) {
+        self.subscribers
+            .retain(|tx| tx.send(payload.clone()).is_ok());
+    }
+
     fn notify(&mut self) {
         let diagrams: Vec<&Diagram> = self.diagrams.values().collect();
         let payload = serde_json::json!({
@@ -139,8 +142,7 @@ impl DiagramRegistry {
         })
         .to_string();
 
-        self.subscribers
-            .retain(|tx| tx.send(payload.clone()).is_ok());
+        self.notify_custom(payload);
     }
 }
 

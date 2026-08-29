@@ -16,15 +16,21 @@ pub struct PreviewServer {
     registry: Arc<Mutex<DiagramRegistry>>,
     base_dir: String,
     lsp_sender: Arc<Mutex<Sender<Message>>>,
+    theme: String,
 }
 
 impl PreviewServer {
-    pub fn new(registry: Arc<Mutex<DiagramRegistry>>, lsp_sender: Sender<Message>) -> Self {
+    pub fn new(
+        registry: Arc<Mutex<DiagramRegistry>>,
+        lsp_sender: Sender<Message>,
+        theme: String,
+    ) -> Self {
         Self {
             port: 0,
             registry,
             base_dir: find_web_dir(),
             lsp_sender: Arc::new(Mutex::new(lsp_sender)),
+            theme,
         }
     }
 
@@ -39,13 +45,21 @@ impl PreviewServer {
         let registry = Arc::clone(&self.registry);
         let base_dir = self.base_dir.clone();
         let lsp_sender = Arc::clone(&self.lsp_sender);
+        let theme = self.theme.clone();
         let request_counter = AtomicU64::new(1);
 
         thread::spawn(move || {
             eprintln!(
                 "mermaid-view-server: preview server on http://127.0.0.1:{port} (web dir: {base_dir})"
             );
-            Self::serve(listener, registry, &base_dir, lsp_sender, request_counter);
+            Self::serve(
+                listener,
+                registry,
+                &base_dir,
+                lsp_sender,
+                request_counter,
+                theme,
+            );
         });
 
         Ok(port)
@@ -57,6 +71,7 @@ impl PreviewServer {
         base_dir: &str,
         lsp_sender: Arc<Mutex<Sender<Message>>>,
         request_counter: AtomicU64,
+        theme: String,
     ) {
         for stream in listener.incoming() {
             match stream {
@@ -65,6 +80,7 @@ impl PreviewServer {
                     let base_dir = base_dir.to_string();
                     let lsp_sender = Arc::clone(&lsp_sender);
                     let counter = AtomicU64::new(request_counter.fetch_add(1, Ordering::SeqCst));
+                    let theme = theme.clone();
                     thread::spawn(move || {
                         if let Err(e) = Self::handle_connection(
                             &mut stream,
@@ -72,6 +88,7 @@ impl PreviewServer {
                             &base_dir,
                             &lsp_sender,
                             &counter,
+                            &theme,
                         ) {
                             eprintln!("mermaid-view-server: connection error: {e}");
                         }
@@ -88,6 +105,7 @@ impl PreviewServer {
         base_dir: &str,
         lsp_sender: &Arc<Mutex<Sender<Message>>>,
         request_counter: &AtomicU64,
+        theme: &str,
     ) -> anyhow::Result<()> {
         // Read the full HTTP request headers (up to the blank line)
         let mut buf = [0u8; 8192];
@@ -117,7 +135,14 @@ impl PreviewServer {
             && request.to_ascii_lowercase().contains("connection: upgrade");
 
         if is_ws {
-            Self::handle_ws_upgrade(stream, &request, registry, lsp_sender, request_counter);
+            Self::handle_ws_upgrade(
+                stream,
+                &request,
+                registry,
+                lsp_sender,
+                request_counter,
+                theme,
+            );
             return Ok(());
         }
 
@@ -186,6 +211,7 @@ impl PreviewServer {
                             "file": d.file,
                             "lineStart": d.line_start,
                             "lineEnd": d.line_end,
+                            "contentHash": d.content_hash,
                         })
                     })
                     .collect();
@@ -211,6 +237,7 @@ impl PreviewServer {
         registry: &Arc<Mutex<DiagramRegistry>>,
         lsp_sender: &Arc<Mutex<Sender<Message>>>,
         request_counter: &AtomicU64,
+        theme: &str,
     ) {
         // Extract Sec-WebSocket-Key
         let key = request
@@ -270,6 +297,15 @@ impl PreviewServer {
             let mut reg = registry.lock().unwrap();
             reg.subscribe_json().1
         };
+
+        // Send current theme immediately after init
+        if let Err(e) = ws.send(tungstenite::Message::Text(
+            serde_json::json!({"type": "theme", "theme": theme})
+                .to_string()
+                .into(),
+        )) {
+            eprintln!("mermaid-view-server: ws theme send error: {e}");
+        }
 
         let lsp_sender = Arc::clone(lsp_sender);
         let registry = Arc::clone(registry);

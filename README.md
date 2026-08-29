@@ -35,7 +35,43 @@ Then in Zed: `Ctrl+Shift+P` → "Extensions: Install Development Extension" → 
 1. Open a markdown file with `mermaid` code blocks in Zed
 2. The server starts automatically and opens a browser
 3. All diagrams appear on a zoomable canvas
-4. Edit in Zed → diagrams update live (500ms poll, WebSocket in Phase 2)
+4. Edit in Zed → diagrams update live via WebSocket
+
+## Controls
+
+| Input | Action |
+|-------|--------|
+| Drag empty canvas | Pan |
+| Mouse wheel | Zoom |
+| `F` | Fit all diagrams |
+| `R` | Reset zoom/position |
+| `+` / `-` | Zoom in/out |
+| Double-click card | Focus mode (pan/zoom the SVG) |
+| `Esc` | Exit focus mode |
+| Hover card footer | Export SVG / PNG |
+
+## Commands
+
+With the cursor inside a `mermaid` block:
+
+- **Open Diagram Workspace** — opens the browser canvas.
+- **Highlight Diagram in Workspace** — highlights the corresponding card in the browser.
+
+Click any card in the browser to jump back to its source in Zed.
+
+## Settings
+
+You can override the canvas theme in your Zed `settings.json`:
+
+```json
+{
+  "mermaidView": {
+    "theme": "light"
+  }
+}
+```
+
+Valid values: `"light"` or `"dark"`. The default is `"dark"`.
 
 ## Architecture
 
@@ -49,19 +85,24 @@ The browser runs mermaid.js directly — no Node.js, no CLI, no temp files.
 
 ## Status
 
-🚧 **Phase 1: Core Pipeline** — Building the foundation.
+🚧 **Phase 3: Navigation & Polish** — Core features complete, polishing remaining.
 
 | Component | Status |
 |-----------|--------|
-| Extension (`src/`) | ✅ Written |
-| Server LSP (`server/src/lsp.rs`) | ✅ Written |
-| Server HTTP (`server/src/server.rs`) | ✅ Written |
-| Diagram extraction (`server/src/extract.rs`) | ✅ Written + tests |
-| Diagram registry (`server/src/registry.rs`) | ✅ Written + tests |
-| Web app (`web/`) | ✅ Written |
-| mermaid.js vendored | ✅ Done |
-| Build scripts | ✅ Written |
-| Installation scripts | ✅ Written |
+| Extension (`src/`) | ✅ |
+| Server LSP (`server/src/lsp.rs`) | ✅ |
+| Server HTTP + WebSocket (`server/src/server.rs`) | ✅ |
+| Diagram extraction (`server/src/extract.rs`) | ✅ + tests |
+| Diagram registry (`server/src/registry.rs`) | ✅ + tests |
+| Web app (`web/`) | ✅ |
+| mermaid.js vendored | ✅ |
+| Build/install scripts | ✅ |
+| Live WebSocket updates | ✅ |
+| Multi-diagram canvas + focus mode | ✅ |
+| Click-to-source / source-to-diagram highlight | ✅ |
+| Theme sync | ✅ |
+| Export SVG/PNG | ✅ |
+| Render debounce + cache | ✅ |
 
 ## Project Structure
 
@@ -101,6 +142,8 @@ cd server && cargo test
 # Run server standalone (for testing web app)
 cargo run -p mermaid-view-server
 ```
+
+The standalone server reads `web/` from the repository root. Open the URL it prints.
 
 ## License
 

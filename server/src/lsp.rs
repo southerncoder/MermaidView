@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use lsp_server::{Connection, Message, Notification, Request, RequestId, Response};
 use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams, CodeActionResponse, Command,
-    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    ExecuteCommandOptions, ExecuteCommandParams, InitializeParams, InitializeResult,
-    ServerCapabilities, ServerInfo, TextDocumentSyncKind,
+    DidChangeConfigurationParams, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams, ExecuteCommandOptions, ExecuteCommandParams, InitializeParams,
+    InitializeResult, ServerCapabilities, ServerInfo, TextDocumentSyncKind,
 };
 
 use crate::extract::extract_blocks_accurate;
@@ -18,6 +18,7 @@ pub struct LspState {
     documents: HashMap<String, String>,
     connection: Connection,
     server_url: Option<String>,
+    theme: String,
 }
 
 impl LspState {
@@ -27,11 +28,22 @@ impl LspState {
             documents: HashMap::new(),
             connection,
             server_url: None,
+            theme: "dark".to_string(),
         }
     }
 
     pub fn set_server_url(&mut self, url: String) {
         self.server_url = Some(url);
+    }
+
+    pub fn set_theme(&mut self, theme: String) {
+        if theme == "light" || theme == "dark" {
+            self.theme = theme.clone();
+            self.broadcast_to_browser(serde_json::json!({
+                "type": "theme",
+                "theme": theme,
+            }));
+        }
     }
 
     /// Run the LSP main loop. Performs initialization first.
@@ -52,7 +64,10 @@ impl LspState {
             )),
             code_action_provider: Some(lsp_types::CodeActionProviderCapability::Simple(true)),
             execute_command_provider: Some(ExecuteCommandOptions {
-                commands: vec!["mermaidView.openWorkspace".to_string()],
+                commands: vec![
+                    "mermaidView.openWorkspace".to_string(),
+                    "mermaidView.highlightDiagram".to_string(),
+                ],
                 work_done_progress_options: Default::default(),
             }),
             ..Default::default()
@@ -165,6 +180,17 @@ impl LspState {
                     self.document_changed(&file_uri);
                 }
             }
+            "workspace/didChangeConfiguration" => {
+                let params: DidChangeConfigurationParams =
+                    match serde_json::from_value(notif.params) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            eprintln!("mermaid-view-server: parse error: {e}");
+                            return;
+                        }
+                    };
+                self.configuration_changed(params);
+            }
             "textDocument/didClose" => {
                 let params: DidCloseTextDocumentParams = match serde_json::from_value(notif.params)
                 {
@@ -230,11 +256,18 @@ impl LspState {
             return Vec::new();
         }
 
+        let line = params.range.start.line + 1;
         let reg = self.registry.lock().unwrap();
-        let has_diagrams = !reg.diagrams_for_file(&file_uri).is_empty();
+        let diagrams = reg.diagrams_for_file(&file_uri);
+        let has_diagrams = !diagrams.is_empty();
+        let cursor_in_diagram = diagrams
+            .iter()
+            .any(|d| line >= d.line_start && line <= d.line_end);
+
+        let mut actions = Vec::new();
 
         if has_diagrams {
-            vec![CodeActionOrCommand::CodeAction(CodeAction {
+            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
                 title: "Open Diagram Workspace".to_string(),
                 kind: Some(CodeActionKind::REFACTOR),
                 command: Some(Command {
@@ -246,16 +279,71 @@ impl LspState {
                         .unwrap_or(""))]),
                 }),
                 ..Default::default()
-            })]
-        } else {
-            Vec::new()
+            }));
         }
+
+        if cursor_in_diagram {
+            if let Some(diagram) = diagrams
+                .iter()
+                .find(|d| line >= d.line_start && line <= d.line_end)
+            {
+                actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                    title: "Highlight Diagram in Workspace".to_string(),
+                    kind: Some(CodeActionKind::REFACTOR),
+                    command: Some(Command {
+                        title: "Highlight Diagram in Workspace".to_string(),
+                        command: "mermaidView.highlightDiagram".to_string(),
+                        arguments: Some(vec![serde_json::json!(diagram.id.clone())]),
+                    }),
+                    ..Default::default()
+                }));
+            }
+        }
+
+        actions
+    }
+
+    fn configuration_changed(&mut self, params: DidChangeConfigurationParams) {
+        // Zed sends the full settings object under params.settings.
+        // We look for a "theme" key in various common shapes.
+        let settings = &params.settings;
+        let new_theme = settings
+            .get("mermaidView")
+            .and_then(|v| v.get("theme"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_lowercase())
+            .filter(|s| s == "light" || s == "dark")
+            .unwrap_or_else(|| self.theme.clone());
+
+        if new_theme != self.theme {
+            self.theme = new_theme.clone();
+            self.broadcast_to_browser(serde_json::json!({
+                "type": "theme",
+                "theme": new_theme,
+            }));
+        }
+    }
+
+    fn broadcast_to_browser(&self, msg: serde_json::Value) {
+        let payload = msg.to_string();
+        let mut reg = self.registry.lock().unwrap();
+        reg.notify_custom(payload);
     }
 
     fn execute_command(&mut self, params: &ExecuteCommandParams, id: RequestId) {
         let result = if params.command == "mermaidView.openWorkspace" {
             if let Some(url) = self.server_url.as_ref() {
                 crate::open_browser(url);
+            }
+            Some(serde_json::Value::Null)
+        } else if params.command == "mermaidView.highlightDiagram" {
+            if let Some(arg) = params.arguments.first() {
+                if let Some(id) = arg.as_str() {
+                    self.broadcast_to_browser(serde_json::json!({
+                        "type": "highlight",
+                        "id": id,
+                    }));
+                }
             }
             Some(serde_json::Value::Null)
         } else {
