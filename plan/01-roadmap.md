@@ -131,13 +131,13 @@ quality.
   - Download individual diagram as SVG
   - Download individual diagram as PNG (canvas-based)
 
-- [ ] **Zed settings schema**
-  - Register `mermaidView.theme` setting so users can override
-  - Document in README
+- [~] **Zed settings schema**
+  - [x] Theme overridable via `lsp.mermaid-view.settings` (extension passes workspace config + init options)
+  - [ ] Document the setting in README
 
-- [ ] **Port fallback / error UX**
-  - Port already in use → find alternative port
-  - Surface server start failures to Zed
+- [~] **Port fallback / error UX**
+  - [x] Ephemeral random port (`127.0.0.1:0`) — no conflict by design
+  - [ ] Surface server start failures nicely in Zed (currently only via LSP exit)
 
 **Deliverable:** Click a diagram → Zed jumps to source. Cursor in
 source → run "Highlight Diagram in Workspace" to focus the card.
@@ -151,10 +151,10 @@ Smooth performance. Themed. Export ready.
 
 **Tasks:**
 
-- [x] **Multi-File Workspace View**
-  - Show diagrams from all open files, grouped by file
-  - Section headers per file
-  - Toggle: current file only / all open files / entire workspace
+- [~] **Multi-File Workspace View**
+  - [x] Show diagrams from all open files
+  - [ ] Section headers per file
+  - [ ] Toggle: current file only / all open files / entire workspace
 
 - [~] **Manual Layout**
   - [x] Drag cards to custom positions (scale-aware, pinned absolutely)
