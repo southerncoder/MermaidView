@@ -404,6 +404,13 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  
+  // Open import panel with Ctrl+Shift+I
+  if ((e.ctrlKey && e.shiftKey && e.key === 'I')) {
+    if (importPanelEl) toggleImportPanel();
+    return;
+  }
+  
   if (e.key === 'f' || e.key === 'F') fitAll();
   if (e.key === 'p' || e.key === 'P') startPresentation();
   if (e.key === 'r' || e.key === 'R') {
@@ -1141,7 +1148,6 @@ let importPanel = null;
 // Locked positions are now automatically saved on drag - they persist indefinitely unless resetLayout() is called
 
 // ---- Import panel initialization ----
-let importPanel = null;
 const importPanelEl = document.getElementById('import-panel');
 if (importPanelEl) {
   importPanel = importPanelEl;
@@ -1171,12 +1177,14 @@ function addImportedDiagram() {
   }
 
   // Create a unique diagram ID for the imported diagram
-  const tempFile = 'imported-diagram';
+  const tempFile = `imported-diagram-tmp:${Date.now()}`;
   const lineStart = 1;
   const lineEnd = mermaidCode.split('\n').length;
   
   // Use content hash as identifier to avoid conflicts
-  const diagramId = tempFile + ':' + Date.now();
+  const diagramId = tempFile + ':' + Math.random().toString(36).substr(2, 9);
+  
+  console.warn('[IMPORT] Importing temporary Mermaid diagram (will be lost on page reload)');
 
   // Create diagram object
   const newDiagram = {
@@ -1185,6 +1193,7 @@ function addImportedDiagram() {
     source: mermaidCode,
     lineStart: lineStart,
     lineEnd: lineEnd,
+    __isTemporary: true, // Mark as temporary import
   };
 
   // Add to diagrams collection
@@ -1202,19 +1211,27 @@ function addImportedDiagram() {
   }
 }
 
-// Show import panel on Shift+I or by right-clicking canvas
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Shift' && e.altKey) {
-    // Ctrl+Shift+I to open import panel
-    if (importPanelEl) toggleImportPanel();
+// ---- Toggle import panel visibility ----
+function toggleImportPanel() {
+  if (!importPanelEl) return;
+  
+  // Show/hide the import panel
+  importPanelEl.style.display = importPanelEl.style.display === 'none' ? 'block' : 'none';
+  
+  // Update status when panel is open
+  const status = document.getElementById('status');
+  if (importPanelEl.style.display === 'block') {
+    status.textContent = 'Importing...';
   }
-});
+}
 
 // Right-click context menu handler for canvas
-const canvas = document.getElementById('canvas');
-if (canvas) {
+if (document.getElementById('canvas')) {
   canvas.addEventListener('contextmenu', (e) => {
-    e.preventDefault();
-    if (!arrangeMode && importPanel) toggleImportPanel();
+    // Only prevent default if not dragging and in free layout mode
+    if (!isDragging && !arrangeMode) {
+      e.preventDefault();
+      if (importPanelEl) toggleImportPanel();
+    }
   });
 }
