@@ -1135,3 +1135,86 @@ document.addEventListener('DOMContentLoaded', () => {
   loadAndRender();
   connectWebSocket();
 });
+
+// ---- New: Import panel and locked positions setup ----
+let importPanel = null;
+// Locked positions are now automatically saved on drag - they persist indefinitely unless resetLayout() is called
+
+// ---- Import panel initialization ----
+let importPanel = null;
+const importPanelEl = document.getElementById('import-panel');
+if (importPanelEl) {
+  importPanel = importPanelEl;
+  
+  // Add button click handler
+  const addButton = document.getElementById('import-add');
+  if (addButton) {
+    addButton.addEventListener('click', () => addImportedDiagram());
+  }
+  
+  // Toggle on panel click
+  if (importPanelEl) {
+    importPanelEl.addEventListener('click', (e) => {
+      if (e.target === importPanelEl || e.target.id === 'import-close') {
+        toggleImportPanel();
+      }
+    });
+  }
+}
+
+// ---- Function to add imported diagram ----
+function addImportedDiagram() {
+  const mermaidCode = document.getElementById('import-mermaid').value.trim();
+  if (!mermaidCode) {
+    alert('Please enter Mermaid code first.');
+    return;
+  }
+
+  // Create a unique diagram ID for the imported diagram
+  const tempFile = 'imported-diagram';
+  const lineStart = 1;
+  const lineEnd = mermaidCode.split('\n').length;
+  
+  // Use content hash as identifier to avoid conflicts
+  const diagramId = tempFile + ':' + Date.now();
+
+  // Create diagram object
+  const newDiagram = {
+    id: diagramId,
+    file: tempFile,
+    source: mermaidCode,
+    lineStart: lineStart,
+    lineEnd: lineEnd,
+  };
+
+  // Add to diagrams collection
+  diagrams.push(newDiagram);
+
+  // Clear textarea and close panel
+  document.getElementById('import-mermaid').value = '';
+  toggleImportPanel();
+
+  // Render the new diagram
+  const card = getCard(newDiagram);
+  if (card) {
+    applySavedPosition(card, newDiagram);
+    ensureCard(newDiagram);
+  }
+}
+
+// Show import panel on Shift+I or by right-clicking canvas
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Shift' && e.altKey) {
+    // Ctrl+Shift+I to open import panel
+    if (importPanelEl) toggleImportPanel();
+  }
+});
+
+// Right-click context menu handler for canvas
+const canvas = document.getElementById('canvas');
+if (canvas) {
+  canvas.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if (!arrangeMode && importPanel) toggleImportPanel();
+  });
+}
