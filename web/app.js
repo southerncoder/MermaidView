@@ -226,6 +226,10 @@ async function handleDiagramsUpdate(current) {
 
   diagrams = current;
 
+  // Remove leftover empty-state message once real diagrams exist.
+  const emptyState = canvas.querySelector('.empty-state');
+  if (emptyState) emptyState.remove();
+
   // Create/update cards and schedule renders
   for (const diagram of current) {
     ensureCardExists(diagram);

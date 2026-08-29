@@ -10,6 +10,7 @@ use lsp_types::{
 
 use crate::extract::extract_blocks_accurate;
 use crate::registry::DiagramRegistry;
+use crate::server::SharedTheme;
 use std::sync::{Arc, Mutex};
 
 /// Main LSP handler state.
@@ -19,16 +20,22 @@ pub struct LspState {
     connection: Connection,
     server_url: Option<String>,
     theme: String,
+    theme_handle: SharedTheme,
 }
 
 impl LspState {
-    pub fn new(connection: Connection, registry: Arc<Mutex<DiagramRegistry>>) -> Self {
+    pub fn new(
+        connection: Connection,
+        registry: Arc<Mutex<DiagramRegistry>>,
+        theme_handle: SharedTheme,
+    ) -> Self {
         Self {
             registry,
             documents: HashMap::new(),
             connection,
             server_url: None,
             theme: "dark".to_string(),
+            theme_handle,
         }
     }
 
@@ -37,8 +44,10 @@ impl LspState {
     }
 
     pub fn set_theme(&mut self, theme: String) {
-        if theme == "light" || theme == "dark" {
+        // Only act on valid themes, and only broadcast on actual change.
+        if (theme == "light" || theme == "dark") && self.theme != theme {
             self.theme = theme.clone();
+            *self.theme_handle.lock().unwrap() = theme.clone();
             self.broadcast_to_browser(serde_json::json!({
                 "type": "theme",
                 "theme": theme,

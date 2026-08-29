@@ -45,12 +45,19 @@ pub fn extract_blocks_accurate(content: &str) -> Vec<MermaidBlock> {
                         i = j + 1;
                         break;
                     }
-                    source_lines.push(lines[j]);
+                    // Strip trailing \r so CRLF files don't leak into the source.
+                    source_lines.push(lines[j].trim_end_matches('\r'));
                     j += 1;
                 }
 
                 if j >= lines.len() {
-                    // Unclosed fence: treat rest of file as block.
+                    // Unclosed fence: treat rest of file as block. If the
+                    // content ended with \n, split() produced a phantom empty
+                    // final element — drop it so line numbers stay accurate.
+                    if !source_lines.is_empty() && source_lines.last().is_some_and(|l| l.is_empty())
+                    {
+                        source_lines.pop();
+                    }
                     let line_start = (opening_line + 1) as u32;
                     let line_end = line_start + source_lines.len() as u32;
                     let source = source_lines.join("\n");
@@ -102,7 +109,13 @@ fn parse_fence_line(line: &str) -> Option<FenceInfo> {
         return None;
     }
 
-    let lang = trimmed[count..].trim().to_string();
+    // Only the first word of the info string identifies the language
+    // (```mermaid title=x and ```mmd {params} must still match).
+    let lang = trimmed[count..]
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_string();
     Some(FenceInfo {
         char: ch,
         len: count,
@@ -175,5 +188,40 @@ sequenceDiagram
         let blocks = extract_blocks_accurate(content);
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].source, "");
+    }
+
+    #[test]
+    fn test_tilde_fence() {
+        let content = "~~~mermaid\nflowchart TD\n  A --> B\n~~~";
+        let blocks = extract_blocks_accurate(content);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].source, "flowchart TD\n  A --> B");
+    }
+
+    #[test]
+    fn test_fence_with_info_string() {
+        let content = "```mermaid title=My Flow\nflowchart TD\n  A --> B\n```";
+        let blocks = extract_blocks_accurate(content);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].source, "flowchart TD\n  A --> B");
+    }
+
+    #[test]
+    fn test_crlf_line_endings() {
+        let content = "# Title\r\n\r\n```mermaid\r\nflowchart TD\r\n  A --> B\r\n```\r\n";
+        let blocks = extract_blocks_accurate(content);
+        assert_eq!(blocks.len(), 1);
+        // No stray \r should leak into the source.
+        assert_eq!(blocks[0].source, "flowchart TD\n  A --> B");
+        assert_eq!(blocks[0].line_start, 3);
+        assert_eq!(blocks[0].line_end, 5);
+    }
+
+    #[test]
+    fn test_unclosed_fence() {
+        let content = "```mermaid\nflowchart TD\n  A --> B\n";
+        let blocks = extract_blocks_accurate(content);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].source, "flowchart TD\n  A --> B");
     }
 }

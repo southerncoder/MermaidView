@@ -9,6 +9,10 @@ use lsp_server::Message;
 
 use crate::registry::DiagramRegistry;
 
+/// Theme shared between the LSP handler (writer) and the WS upgrade path
+/// (reader), so new browser connections get the current value.
+pub type SharedTheme = Arc<Mutex<String>>;
+
 /// HTTP server that serves the preview app and provides diagram data via REST
 /// and WebSocket.
 pub struct PreviewServer {
@@ -16,14 +20,14 @@ pub struct PreviewServer {
     registry: Arc<Mutex<DiagramRegistry>>,
     base_dir: String,
     lsp_sender: Arc<Mutex<Sender<Message>>>,
-    theme: String,
+    theme: SharedTheme,
 }
 
 impl PreviewServer {
     pub fn new(
         registry: Arc<Mutex<DiagramRegistry>>,
         lsp_sender: Sender<Message>,
-        theme: String,
+        theme: SharedTheme,
     ) -> Self {
         Self {
             port: 0,
@@ -45,7 +49,7 @@ impl PreviewServer {
         let registry = Arc::clone(&self.registry);
         let base_dir = self.base_dir.clone();
         let lsp_sender = Arc::clone(&self.lsp_sender);
-        let theme = self.theme.clone();
+        let theme = Arc::clone(&self.theme);
         let request_counter = AtomicU64::new(1);
 
         thread::spawn(move || {
@@ -71,7 +75,7 @@ impl PreviewServer {
         base_dir: &str,
         lsp_sender: Arc<Mutex<Sender<Message>>>,
         request_counter: AtomicU64,
-        theme: String,
+        theme: SharedTheme,
     ) {
         for stream in listener.incoming() {
             match stream {
@@ -80,7 +84,7 @@ impl PreviewServer {
                     let base_dir = base_dir.to_string();
                     let lsp_sender = Arc::clone(&lsp_sender);
                     let counter = AtomicU64::new(request_counter.fetch_add(1, Ordering::SeqCst));
-                    let theme = theme.clone();
+                    let theme = Arc::clone(&theme);
                     thread::spawn(move || {
                         if let Err(e) = Self::handle_connection(
                             &mut stream,
@@ -105,7 +109,7 @@ impl PreviewServer {
         base_dir: &str,
         lsp_sender: &Arc<Mutex<Sender<Message>>>,
         request_counter: &AtomicU64,
-        theme: &str,
+        theme: &SharedTheme,
     ) -> anyhow::Result<()> {
         // Read the full HTTP request headers (up to the blank line)
         let mut buf = [0u8; 8192];
@@ -237,7 +241,7 @@ impl PreviewServer {
         registry: &Arc<Mutex<DiagramRegistry>>,
         lsp_sender: &Arc<Mutex<Sender<Message>>>,
         request_counter: &AtomicU64,
-        theme: &str,
+        theme: &SharedTheme,
     ) {
         // Extract Sec-WebSocket-Key
         let key = request
@@ -298,9 +302,11 @@ impl PreviewServer {
             reg.subscribe_json().1
         };
 
-        // Send current theme immediately after init
+        // Send the CURRENT theme (may have been changed via didChangeConfiguration
+        // or initialization options) right after init.
+        let current_theme = theme.lock().unwrap().clone();
         if let Err(e) = ws.send(tungstenite::Message::Text(
-            serde_json::json!({"type": "theme", "theme": theme})
+            serde_json::json!({"type": "theme", "theme": current_theme})
                 .to_string()
                 .into(),
         )) {

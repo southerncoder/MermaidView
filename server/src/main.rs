@@ -18,23 +18,23 @@ fn main() -> anyhow::Result<()> {
 
     // Shared state
     let registry = Arc::new(Mutex::new(DiagramRegistry::new()));
+    let theme: Arc<Mutex<String>> = Arc::new(Mutex::new("dark".to_string()));
 
     // Start the preview server
-    let theme = "dark".to_string();
-    let mut preview =
-        server::PreviewServer::new(Arc::clone(&registry), connection.sender.clone(), theme);
+    let mut preview = server::PreviewServer::new(
+        Arc::clone(&registry),
+        connection.sender.clone(),
+        Arc::clone(&theme),
+    );
     let port = preview.start()?;
     let url = format!("http://127.0.0.1:{port}");
 
-    // Open the preview in the browser (unless disabled for tests/automation)
-    if std::env::var("MERMAID_VIEW_NO_BROWSER").is_err() {
-        open_browser(&url);
-    }
+    // Open the preview in the browser
+    open_browser(&url);
 
-    // Initialize LSP state with server URL and initial theme
-    let mut lsp_state = lsp::LspState::new(connection, registry);
+    // Initialize LSP state with server URL and shared theme handle
+    let mut lsp_state = lsp::LspState::new(connection, registry, theme);
     lsp_state.set_server_url(url);
-    lsp_state.set_theme("dark".to_string());
 
     // Run the LSP main loop
     lsp_state.main_loop()?;
@@ -45,6 +45,12 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn open_browser(url: &str) {
+    // Env flag lets tests and automation run headless.
+    if std::env::var("MERMAID_VIEW_NO_BROWSER").is_ok() {
+        eprintln!("mermaid-view-server: browser open skipped (MERMAID_VIEW_NO_BROWSER)");
+        return;
+    }
+
     let result = match std::env::consts::OS {
         "windows" => std::process::Command::new("cmd")
             .args(["/c", "start", url])
