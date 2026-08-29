@@ -26,8 +26,10 @@ fn main() -> anyhow::Result<()> {
     let port = preview.start()?;
     let url = format!("http://127.0.0.1:{port}");
 
-    // Open the preview in the browser
-    open_browser(&url);
+    // Open the preview in the browser (unless disabled for tests/automation)
+    if std::env::var("MERMAID_VIEW_NO_BROWSER").is_err() {
+        open_browser(&url);
+    }
 
     // Initialize LSP state with server URL and initial theme
     let mut lsp_state = lsp::LspState::new(connection, registry);

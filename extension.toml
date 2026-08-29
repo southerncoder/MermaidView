@@ -16,3 +16,8 @@ languages = ["Markdown", "Mermaid"]
 [language_servers.mermaid-view.language_ids]
 "Markdown" = "markdown"
 "Mermaid" = "mermaid"
+
+[[capabilities]]
+kind = "process:exec"
+command = "*"
+args = ["**"]

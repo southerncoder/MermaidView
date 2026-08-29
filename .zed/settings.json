@@ -1,0 +1,11 @@
+{
+  "extension": {
+    "granted_extension_capabilities": [
+      {
+        "kind": "process:exec",
+        "command": "*",
+        "args": ["**"]
+      }
+    ]
+  }
+}

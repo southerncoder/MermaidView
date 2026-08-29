@@ -51,7 +51,18 @@ impl LspState {
         eprintln!("mermaid-view-server: LSP initializing");
 
         let (init_id, init_params) = self.connection.initialize_start()?;
-        let _init_params: InitializeParams = serde_json::from_value(init_params)?;
+        let initialize_params: InitializeParams = serde_json::from_value(init_params)?;
+
+        // Theme can arrive via initialization options (set through
+        // "lsp.mermaid-view.settings" in Zed) before any didChangeConfiguration.
+        if let Some(theme) = initialize_params
+            .initialization_options
+            .as_ref()
+            .and_then(|v| theme_setting(v))
+            .filter(|t| !t.is_empty())
+        {
+            self.set_theme(theme);
+        }
 
         let server_info = ServerInfo {
             name: "MermaidView".to_string(),
@@ -304,24 +315,13 @@ impl LspState {
     }
 
     fn configuration_changed(&mut self, params: DidChangeConfigurationParams) {
-        // Zed sends the full settings object under params.settings.
-        // We look for a "theme" key in various common shapes.
+        // Accepts both shapes:
+        //   { "theme": "light" }
+        //   { "mermaidView": { "theme": "light" } }
         let settings = &params.settings;
-        let new_theme = settings
-            .get("mermaidView")
-            .and_then(|v| v.get("theme"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_lowercase())
-            .filter(|s| s == "light" || s == "dark")
-            .unwrap_or_else(|| self.theme.clone());
+        let new_theme = theme_setting(settings).unwrap_or_else(|| self.theme.clone());
 
-        if new_theme != self.theme {
-            self.theme = new_theme.clone();
-            self.broadcast_to_browser(serde_json::json!({
-                "type": "theme",
-                "theme": new_theme,
-            }));
-        }
+        self.set_theme(new_theme);
     }
 
     fn broadcast_to_browser(&self, msg: serde_json::Value) {
@@ -365,4 +365,14 @@ fn is_markdown(uri: &str) -> bool {
 
 fn is_mermaid(uri: &str) -> bool {
     uri.ends_with(".mmd")
+}
+
+fn theme_setting(value: &serde_json::Value) -> Option<String> {
+    let raw = value
+        .get("mermaidView")
+        .and_then(|v| v.get("theme"))
+        .or_else(|| value.get("theme"))
+        .and_then(|v| v.as_str())?;
+    let lower = raw.to_lowercase();
+    (lower == "light" || lower == "dark").then_some(lower)
 }
