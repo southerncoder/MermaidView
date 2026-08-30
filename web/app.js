@@ -1038,9 +1038,9 @@ async function fetchDiagramsFallback() {
 
 async function loadAndRender() {
   setStatus('Loading diagrams...', '');
+  // In standalone mode, fetchDiagramsFallback returns [] which is fine
   const initial = await fetchDiagramsFallback();
-  await handleDiagramsUpdate(initial);
-  renderCanvas(); // Render after loading
+  handleDiagramsUpdate(initial);
 }
 
 // ---- Presentation mode ----
@@ -1302,13 +1302,10 @@ function loadFiles(files) {
   
   Promise.all(promises)
     .then(() => {
-      console.log('[OPEN] All files loaded - refreshing canvas');
-      // Rebuild the diagrams array (includes new ones) and trigger render
-      fetchDiagramsFallback().then(existing => {
-        diagrams.push(...existing);
-        renderCanvas();
-        setStatus(`Loaded: ${files.map(f => f.name).join(', ')}`, '');
-      });
+      console.log('[OPEN] All files loaded - rendering diagramss');
+      // Render canvas with current diagrams (includes pushed ones)
+      renderCanvas();
+      setStatus(`Open Files: ${files.map(f => f.name).join(', ')}`, '');
     })
     .catch(err => {
       console.error('[OPEN] Error loading files:', err.message);
@@ -1335,8 +1332,9 @@ function extractAndAddDiagrams(content, file) {
   let totalDiagrams = 0;
   
   for (const pattern of patterns) {
+    const regex = pattern[0];
     let match;
-    while ((match = pattern[0].exec(content)) !== null) {
+    while ((match = regex.exec(content)) !== null) {
       const diagramContent = match[1]?.trim();
       if (!diagramContent) continue;
       
@@ -1344,7 +1342,7 @@ function extractAndAddDiagrams(content, file) {
       const lines = content.split('\n');
       let lineStart = 1;
       for (let i = 0; i < lines.length; i++) {
-        if (lines[i].match(/^```mermaid|~~~\s*mermaid|^```graph/)) {
+        if (/^(?:```mermaid|~~~\s*mermaid|^```graph)/.test(lines[i])) {
           lineStart = i + 2;
           break;
         }
@@ -1360,15 +1358,21 @@ function extractAndAddDiagrams(content, file) {
         __isLoadedFrom: true,
       };
       
-      // Check if not already in collection
+      // Add to collection if not already present
       if (!diagrams.some(d => d.id === diagramId)) {
         diagrams.push(newDiagram);
         totalDiagrams++;
+        console.log(`[OPEN] Added diagram: ${diagramId}`);
       }
     }
   }
   
-  console.log(`[OPEN] Found ${totalDiagrams} diagrams in ${file.name}`);
+  if (totalDiagrams > 0) {
+    console.log(`[OPEN] Found and added ${totalDiagrams} diagrams in ${file.name}`);
+  } else {
+    console.log(`[OPEN] No mermaid blocks found in: ${file.name}`);
+  }
+  
   return totalDiagrams;
 }
 
