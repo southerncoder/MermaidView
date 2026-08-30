@@ -127,6 +127,16 @@ body {
   border-color: var(--accent);
 }
 
+.controls-btn {
+  cursor: pointer;
+  font-size: 13px;
+  padding: 4px 8px;
+}
+
+.controls-btn:hover {
+  background: var(--bg-card);
+}
+
 /* Diagram Cards */
 .diagram-card {
   background: var(--bg-card);

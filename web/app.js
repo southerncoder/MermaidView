@@ -1246,8 +1246,104 @@ if (document.getElementById('canvas')) {
   });
 }
 
-// ---- Drag & Drop support ----
-dropFilesOnCanvas();
+// ---- File Open support ----
+document.addEventListener('DOMContentLoaded', () => {
+  const canvas = document.getElementById('canvas');
+  if (!canvas || !document.getElementById('toolbar')) return;
+  
+  // Add "Open Files" button after Layout button
+  const toolbar = document.getElementById('toolbar');
+  const layoutBtn = toolbar.querySelector('#btn-reset-layout');
+  if (layoutBtn) {
+    const fileBtn = document.createElement('button');
+    fileBtn.id = 'btn-open-files';
+    fileBtn.className = 'controls-btn';
+    fileBtn.textContent = '📂 Open Files...';
+    fileBtn.style.marginLeft = '8px';
+    
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.accept = '.md,.markdown,.mdx,.mmd';
+    input.style.display = 'none';
+    
+    fileBtn.onclick = () => input.click();
+    
+    input.onchange = (e) => {
+      const files = Array.from(e.target.files);
+      if (!files.length) return;
+      
+      console.log('[OPEN] Loading files:', files.map(f => f.name));
+      
+      // Read and add all dropped files
+      Promise.all(files.map(readFile)).then(diagrams => {
+        diagrams.forEach(d => {
+          if (d && !diagrams.find(existing => existing.id === d.id)) {
+            const card = getCard(d);
+            if (card) {
+              applySavedPosition(card, d);
+              ensureCard(d);
+            }
+          }
+        });
+      }).catch(err => {
+        console.error('[OPEN] Error loading files:', err.message);
+      });
+    };
+    
+    toolbar.appendChild(fileBtn);
+  }
+});
+
+function readFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        // Extract mermaid blocks and add diagrams
+        const matchers = [
+          [/```mermaid(.*?)```/gs, 'mermaid'],
+          [/~~~\s*mermaid(.*?)~~~/gs, 'mermaid'],
+        ];
+        
+        let foundAny = false;
+        for (const [regex, type] of matchers) {
+          let match;
+          while ((match = regex.exec(e.target.result)) !== null) {
+            const content = match[1]?.trim();
+            if (!content) continue;
+            
+            const lineNum = e.target.result.slice(0, match.index).split('\n').length;
+            const tempFile = file.name + ':open:' + Date.now();
+            const diagramId = `${tempFile}:${lineNum}`;
+            
+            const newDiagram = {
+              id: diagramId,
+              file: file.name,
+              source: content,
+              lineStart: lineNum,
+              lineEnd: lineNum + (content.split('\n').length - 1),
+              __isLoadedFrom: true,
+            };
+            
+            diagrams.push(newDiagram);
+            foundAny = true;
+          }
+        }
+        
+        if (!foundAny) {
+          console.log('[OPEN] No mermaid blocks found in:', file.name);
+        }
+        
+        resolve([e.target.result]);
+      } catch (err) {
+        reject(err);
+      }
+    };
+    reader.onerror = reject;
+    reader.readAsText(file);
+  });
+}
 
 function dropFilesOnCanvas() {
   const canvas = document.getElementById('canvas');
