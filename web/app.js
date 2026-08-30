@@ -1040,6 +1040,7 @@ async function loadAndRender() {
   setStatus('Loading diagrams...', '');
   const initial = await fetchDiagramsFallback();
   await handleDiagramsUpdate(initial);
+  renderCanvas(); // Render after loading
 }
 
 // ---- Presentation mode ----
@@ -1247,47 +1248,51 @@ if (document.getElementById('canvas')) {
 }
 
 // ---- File Open support ----
-document.addEventListener('DOMContentLoaded', () => {
-  const canvas = document.getElementById('canvas');
-  if (!canvas || !document.getElementById('toolbar')) return;
-  
-  // Add "Open Files" button after Layout button
+
+// Re-attach Open Files button after every page change  
+const reAttachOpenFiles = () => {
   const toolbar = document.getElementById('toolbar');
-  const layoutBtn = toolbar.querySelector('#btn-reset-layout');
-  if (layoutBtn) {
-    try {
-      const fileBtn = document.createElement('button');
-      fileBtn.id = 'btn-open-files';
-      fileBtn.className = 'controls-btn';
-      fileBtn.textContent = '📂 Open...';
-      fileBtn.style.marginLeft = '4px';
+  if (!toolbar) return;
+  
+  // Remove existing button if present
+  const existingBtn = document.getElementById('btn-open-files');
+  if (existingBtn) existingBtn.remove();
+  
+  // Create new Open Files button
+  try {
+    const fileBtn = document.createElement('button');
+    fileBtn.id = 'btn-open-files';
+    fileBtn.className = 'controls-btn';
+    fileBtn.textContent = '📂 Open...';
+    fileBtn.style.marginLeft = '4px';
+    
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.accept = '.md,.markdown,.mmd';
+    input.style.display = 'none';
+    
+    fileBtn.onclick = () => {
+      console.log('[OPEN] Clicked Open Files button');
+      input.click();
+    };
+    
+    input.onchange = (e) => {
+      const files = Array.from(e.target.files);
+      if (!files.length) return;
       
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.multiple = true;
-      input.accept = '.md,.markdown,.mmd';
-      input.style.display = 'none';
-      
-      fileBtn.onclick = () => {
-        console.log('[OPEN] Clicked Open Files button');
-        input.click();
-      };
-      
-      input.onchange = (e) => {
-        const files = Array.from(e.target.files);
-        if (!files.length) return;
-        
-        console.log('[OPEN] Selected files:', files.map(f => f.name));
-        
-        // Read and add all selected files
-        loadFiles(files);
-      };
-      
-      toolbar.appendChild(fileBtn);
-    } catch (err) {
-      console.error('[OPEN] Error creating file button:', err.message);
-    }
+      console.log('[OPEN] Selected files:', files.map(f => f.name).join(', '));
+      loadFiles(files);
+    };
+    
+    toolbar.appendChild(fileBtn);
+  } catch (err) {
+    console.error('[OPEN] Error creating file button:', err.message);
   }
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+  reAttachOpenFiles();
 });
 
 function loadFiles(files) {
@@ -1297,7 +1302,13 @@ function loadFiles(files) {
   
   Promise.all(promises)
     .then(() => {
-      console.log('[OPEN] All files loaded');
+      console.log('[OPEN] All files loaded - refreshing canvas');
+      // Rebuild the diagrams array (includes new ones) and trigger render
+      fetchDiagramsFallback().then(existing => {
+        diagrams.push(...existing);
+        renderCanvas();
+        setStatus(`Loaded: ${files.map(f => f.name).join(', ')}`, '');
+      });
     })
     .catch(err => {
       console.error('[OPEN] Error loading files:', err.message);
