@@ -1255,94 +1255,110 @@ document.addEventListener('DOMContentLoaded', () => {
   const toolbar = document.getElementById('toolbar');
   const layoutBtn = toolbar.querySelector('#btn-reset-layout');
   if (layoutBtn) {
-    const fileBtn = document.createElement('button');
-    fileBtn.id = 'btn-open-files';
-    fileBtn.className = 'controls-btn';
-    fileBtn.textContent = '📂 Open Files...';
-    fileBtn.style.marginLeft = '8px';
-    
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.multiple = true;
-    input.accept = '.md,.markdown,.mdx,.mmd';
-    input.style.display = 'none';
-    
-    fileBtn.onclick = () => input.click();
-    
-    input.onchange = (e) => {
-      const files = Array.from(e.target.files);
-      if (!files.length) return;
+    try {
+      const fileBtn = document.createElement('button');
+      fileBtn.id = 'btn-open-files';
+      fileBtn.className = 'controls-btn';
+      fileBtn.textContent = '📂 Open...';
+      fileBtn.style.marginLeft = '4px';
       
-      console.log('[OPEN] Loading files:', files.map(f => f.name));
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.multiple = true;
+      input.accept = '.md,.markdown,.mmd';
+      input.style.display = 'none';
       
-      // Read and add all dropped files
-      Promise.all(files.map(readFile)).then(diagrams => {
-        diagrams.forEach(d => {
-          if (d && !diagrams.find(existing => existing.id === d.id)) {
-            const card = getCard(d);
-            if (card) {
-              applySavedPosition(card, d);
-              ensureCard(d);
-            }
-          }
-        });
-      }).catch(err => {
-        console.error('[OPEN] Error loading files:', err.message);
-      });
-    };
-    
-    toolbar.appendChild(fileBtn);
+      fileBtn.onclick = () => {
+        console.log('[OPEN] Clicked Open Files button');
+        input.click();
+      };
+      
+      input.onchange = (e) => {
+        const files = Array.from(e.target.files);
+        if (!files.length) return;
+        
+        console.log('[OPEN] Selected files:', files.map(f => f.name));
+        
+        // Read and add all selected files
+        loadFiles(files);
+      };
+      
+      toolbar.appendChild(fileBtn);
+    } catch (err) {
+      console.error('[OPEN] Error creating file button:', err.message);
+    }
   }
 });
 
-function readFile(file) {
+function loadFiles(files) {
+  const promises = files.map(file => {
+    return readFileText(file).then(content => extractAndAddDiagrams(content, file));
+  });
+  
+  Promise.all(promises)
+    .then(() => {
+      console.log('[OPEN] All files loaded');
+    })
+    .catch(err => {
+      console.error('[OPEN] Error loading files:', err.message);
+    });
+}
+
+function readFileText(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        // Extract mermaid blocks and add diagrams
-        const matchers = [
-          [/```mermaid(.*?)```/gs, 'mermaid'],
-          [/~~~\s*mermaid(.*?)~~~/gs, 'mermaid'],
-        ];
-        
-        let foundAny = false;
-        for (const [regex, type] of matchers) {
-          let match;
-          while ((match = regex.exec(e.target.result)) !== null) {
-            const content = match[1]?.trim();
-            if (!content) continue;
-            
-            const lineNum = e.target.result.slice(0, match.index).split('\n').length;
-            const tempFile = file.name + ':open:' + Date.now();
-            const diagramId = `${tempFile}:${lineNum}`;
-            
-            const newDiagram = {
-              id: diagramId,
-              file: file.name,
-              source: content,
-              lineStart: lineNum,
-              lineEnd: lineNum + (content.split('\n').length - 1),
-              __isLoadedFrom: true,
-            };
-            
-            diagrams.push(newDiagram);
-            foundAny = true;
-          }
-        }
-        
-        if (!foundAny) {
-          console.log('[OPEN] No mermaid blocks found in:', file.name);
-        }
-        
-        resolve([e.target.result]);
-      } catch (err) {
-        reject(err);
-      }
-    };
-    reader.onerror = reject;
+    reader.onload = (e) => resolve(e.target.result);
+    reader.onerror = () => reject(new Error('Failed to read file'));
     reader.readAsText(file);
   });
+}
+
+function extractAndAddDiagrams(content, file) {
+  // Simple regex-based extraction of mermaid code blocks
+  const patterns = [
+    [/```mermaid\s*\n([^`]+)```/gs],
+    [/```graph(?!\w)\s*\n([^`]+)```/gs],
+    [/~~~\s*mermaid\s*\n([^`]+)~~~/gs],
+  ];
+  
+  let totalDiagrams = 0;
+  
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern[0].exec(content)) !== null) {
+      const diagramContent = match[1]?.trim();
+      if (!diagramContent) continue;
+      
+      // Extract title and line number
+      const lines = content.split('\n');
+      let lineStart = 1;
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].match(/^```mermaid|~~~\s*mermaid|^```graph/)) {
+          lineStart = i + 2;
+          break;
+        }
+      }
+      
+      const diagramId = `${file.name}:${Date.now()}:${totalDiagrams}`;
+      const newDiagram = {
+        id: diagramId,
+        file: file.name,
+        source: diagramContent,
+        lineStart: lineStart,
+        lineEnd: lineStart + (diagramContent.split('\n').length - 1),
+        __isLoadedFrom: true,
+      };
+      
+      // Check if not already in collection
+      if (!diagrams.some(d => d.id === diagramId)) {
+        diagrams.push(newDiagram);
+        totalDiagrams++;
+      }
+    }
+  }
+  
+  console.log(`[OPEN] Found ${totalDiagrams} diagrams in ${file.name}`);
+  return totalDiagrams;
 }
 
 function dropFilesOnCanvas() {
