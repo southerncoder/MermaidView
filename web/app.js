@@ -405,8 +405,8 @@ document.addEventListener('keydown', (e) => {
   }
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
   
-  // Open import panel with Ctrl+Shift+I
-  if ((e.ctrlKey && e.shiftKey && e.key === 'I')) {
+  // Open import panel with Alt+I (Ctrl+Shift+I conflicts with Chrome DevTools)
+  if ((e.altKey && e.key === 'I')) {
     if (importPanelEl) toggleImportPanel();
     return;
   }
@@ -769,12 +769,16 @@ function createCard(diagram) {
       </div>
       <span class="card-meta">${escapeHtml(basename(diagram.file))}:${diagram.lineStart}-${diagram.lineEnd}</span>
     </div>
-    <div class="card-body"></div>
+    <div class="card-body resizer-container">
+      <diagram-content/>
+      <div class="resizer-handle" title="Resize corner">☐</div>
+    </div>
     <div class="card-footer">
       <button class="card-btn export-svg" title="Download SVG">SVG</button>
       <button class="card-btn export-png" title="Download PNG">PNG</button>
     </div>
   `;
+  addResizeHandle(card.querySelector('.resizer-container'));
 
   card.addEventListener('mousedown', (e) => beginCardDrag(e, card, diagram));
 
@@ -1152,10 +1156,16 @@ const importPanelEl = document.getElementById('import-panel');
 if (importPanelEl) {
   importPanel = importPanelEl;
   
-  // Add button click handler
-  const addButton = document.getElementById('import-add');
-  if (addButton) {
-    addButton.addEventListener('click', () => addImportedDiagram());
+  // Wire up toolbar Import button
+  const btnImport = document.getElementById('btn-import');
+  if (btnImport) {
+    btnImport.addEventListener('click', toggleImportPanel);
+  }
+  
+  // Add button inside panel - always enabled, renders on click
+  const btnAdd = document.getElementById('import-add');
+  if (btnAdd) {
+    btnAdd.addEventListener('click', () => addImportedDiagram());
   }
   
   // Toggle on panel click
@@ -1233,5 +1243,145 @@ if (document.getElementById('canvas')) {
       e.preventDefault();
       if (importPanelEl) toggleImportPanel();
     }
+  });
+}
+
+// ---- Drag & Drop support ----
+dropFilesOnCanvas();
+
+function dropFilesOnCanvas() {
+  const canvas = document.getElementById('canvas');
+  if (!canvas) return;
+  
+  // Allow dropping files on canvas
+  ['dragover', 'dragleave', 'drop'].forEach(evt => {
+    canvas.addEventListener(evt, handleDropEvent);
+  });
+}
+
+function handleDropEvent(e) {
+  e.preventDefault();
+  
+  // Get dropped files
+  const files = Array.from(e.dataTransfer.files);
+  
+  // Filter for markdown/mermaid files
+  const mdFiles = files.filter(file => 
+    file.name.match(/\.(md|markdown|mdx|mmd)$/i)
+  );
+  
+  if (mdFiles.length === 0) return;
+  
+  // Read first dropped file and add as diagrams
+  readAndAddDroppedFile(mdFiles[0]);
+}
+
+async function readAndAddDroppedFile(file) {
+  try {
+    const text = await file.text();
+    console.log('[DROP] File dropped:', file.name);
+    
+    // Extract mermaid code blocks
+    const matchers = [
+      [/```mermaid(.*?)```/gs, 'mermaid'],
+      [/~~~\s*mermaid(.*?)~~~/gs, 'mermaid'],
+      [/```graph(.*?)```/gs, 'graph'],
+      [/~~~\s*(sequence|class|state)(.*?)~~~/gs, 'mmd'],
+    ];
+    
+    for (const [regex, type] of matchers) {
+      let match;
+      while ((match = regex.exec(text)) !== null) {
+        const fullMatch = match[0];
+        const content = fullMatch.replace(/^```mermaid|~~~\s*mermaid|^\s*(sequence|graph|classDiagram)/i, '').trim();
+        
+        // Create diagram ID based on filename and line number
+        const lineNum = text.slice(0, match.index).split('\n').length;
+        const tempFile = file.name + ':drop:' + Date.now();
+        const diagramId = `${tempFile}:${lineNum}`;
+        
+        // Create diagram object
+        const newDiagram = {
+          id: diagramId,
+          file: file.name,
+          source: content,
+          lineStart: lineNum,
+          lineEnd: lineNum + (content.split('\n').length - 1),
+          __isDropped: true, // Mark as dropped file
+        };
+        
+        console.log('[DROP] Adding diagram:', diagramId);
+        
+        // Add to collection
+        diagrams.push(newDiagram);
+        
+        // Render
+        const card = getCard(newDiagram);
+        if (card) {
+          applySavedPosition(card, newDiagram);
+          ensureCard(newDiagram);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[DROP] Error reading file:', err.message);
+  }
+}
+
+// ---- Card resize handle ----
+function addResizeHandle(container) {
+  // Find existing resize button to avoid duplicates
+  if (container.querySelector('.resizer-handle')) return;
+  
+  const resizer = document.createElement('div');
+  resizer.className = 'resizer-handle';
+  resizer.title = 'Resize corner';
+  
+  // Double-click anywhere on card to resize - simpler UX
+  container.addEventListener('dblclick', (e) => {
+    if (e.target.closest('.resizer-handle')) return;
+    startResizing(container);
+  });
+  
+  container.appendChild(resizer);
+}
+
+function startResizing(cardContainer) {
+  const currentWidth = cardContainer.offsetWidth;
+  const currentHeight = cardContainer.offsetHeight;
+  let isResizing = false;
+  
+  document.addEventListener('mousedown', (e) => {
+    if (!isResizing || e.target !== cardContainer) return;
+    isResizing = true;
+  });
+  
+  const handleMove = (e) => {
+    if (!isResizing) return;
+    
+    const rect = cardContainer.getBoundingClientRect();
+    const newWidth = Math.max(200, e.clientX - rect.left);
+    const newHeight = Math.max(150, e.clientY - rect.top);
+    
+    // Apply new size
+    Object.assign(cardContainer.style, {
+      width: `${newWidth}px`,
+      height: `${newHeight}px`,
+    });
+  };
+  
+  const handleUp = () => {
+    if (!isResizing) return;
+    isResizing = false;
+    document.removeEventListener('mousemove', handleMove);
+    document.removeEventListener('mouseup', handleUp);
+  };
+  
+  cardContainer.addEventListener('dblclick', (e) => {
+    if (e.target.closest('.resizer-handle')) return;
+    const rect = cardContainer.getBoundingClientRect();
+    isResizing = true;
+    document.addEventListener('mousemove', handleMove);
+    document.addEventListener('mouseup', handleUp);
   });
 }

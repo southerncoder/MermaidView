@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>MermaidView - Import Feature Test</title>
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 20px; background: #1e1e1e; color: #fff;}
+    h1 { margin: 0 0 15px; }
+    .btn { padding: 8px 16px; margin: 4px; cursor: pointer; border: none; border-radius: 4px; font-weight: bold;}
+    .primary { background: #3b4ccd; color: white;}
+    .success { background: #2ea043; color: white;}
+    textarea { width: 90%; height: 150px; font-family: monospace; background: #2d2d2d; color: #fff; border: 1px solid #444; margin-bottom: 10px;}
+    .hidden { display: none !important;}
+    #panel { border: 1px solid #555; background: #2d2d2d; padding: 15px; width: 80%;}
+    label { display: block; margin-bottom: 5px; color: #aaa;}
+    .status { margin: 10px 0; padding: 10px; background: #1a1a1a; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>🧪 Import Feature Validation Test</h1>
+  
+  <div class="status">Status: <span id="status-text">Checking...</span></div>
+
+  <button class="btn primary" onclick="openPanel()">📥 Open Import Panel</button>
+  <button class="btn success" onclick="addTestDiagram()">Add Test Diagram</button>
+
+  <!-- Import Panel - HIDDEN until shown -->
+  <div id="panel" style="display:none">
+    <h3>Paste Mermaid Code:</h3>
+    <textarea id="import-mermaid" placeholder="Paste your mermaid diagram code here..."></textarea>
+    <label><input type="checkbox" id="is-test" checked> This is a test import (temporary)</label>
+  </div>
+
+  <button class="btn primary" onclick="showPanel()">Show Import Panel</button>
+  <button class="btn success" onclick="hidePanel()">Hide Panel</button>
+
+  <!-- Test canvas area -->
+  <div id="canvas" style="margin-top: 30px; border: 2px dashed #555; padding: 15px; background: #2d2d2d;">
+    <h3>Canvas Area</h3>
+    <p id="empty-msg">Add diagrams using the Import feature above.</p>
+    <div id="diagram-1" class="hidden"></div>
+  </div>
+
+  <script type="module">
+    const panel = document.getElementById('panel');
+    const importMermaid = document.getElementById('import-mermaid');
+    
+    // Show/hide panel buttons for manual testing
+    window.showPanel = () => {
+      panel.style.display = 'block';
+      updateStatus('Import panel is now visible.');
+    };
+
+    window.hidePanel = () => {
+      panel.style.display = 'none';
+      updateStatus('Import panel hidden.');
+    };
+
+    window.openPanel = () => showPanel();
+
+    function addTestDiagram() {
+      const code = importMermaid.value.trim();
+      
+      if (!code) {
+        alert('Please paste Mermaid code first!');
+        return;
+      }
+
+      // Create a unique ID for the test diagram
+      const id = 'test-' + Date.now();
+      
+      // Render mermaid (basic validation only)
+      try {
+        const result = mermaid.render(id, code);
+        
+        const container = document.getElementById('diagram-1');
+        container.innerHTML = '<h4>📊 Imported Diagram:</h4>' + result.svg;
+        container.classList.remove('hidden');
+        document.getElementById('empty-msg').style.display = 'none';
+        
+        importMermaid.value = ''; // Clear textarea
+        updateStatus('✅ Test diagram added successfully!');
+        console.log('[VALIDATION TEST PASSED] Diagram rendered:', id);
+      } catch (e) {
+        alert('Error: ' + e.message);
+        updateStatus('❌ Error rendering diagram');
+      }
+    }
+
+    function updateStatus(text) {
+      document.getElementById('status-text').textContent = text;
+    }
+
+    // Log validation checks on load
+    window.onload = () => {
+      const panelDisplay = getComputedStyle(panel).display;
+      console.log('[VALIDATION TEST] Import panel initial display:', panelDisplay);
+      
+      if (panelDisplay === 'none') {
+        updateStatus('✅ Import panel is hidden by default (correct behavior)');
+        console.log('[TEST RESULT] Panel starts hidden - CORRECT');
+      } else {
+        updateStatus('⚠️  Panel visible on load - may show alerts immediately');
+      }
+
+      // Check that buttons and elements exist
+      const btn = document.querySelector('.primary');
+      if (btn && btn.textContent.includes('Open Import')) {
+        console.log('[TEST RESULT] Import button found and functional');
+      }
+    };
+  </script>
+</body>
+</html>

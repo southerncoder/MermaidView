@@ -198,6 +198,41 @@ body {
   display: none;
 }
 
+/* Resizable card container */
+.resizer-container {
+  position: relative;
+  min-width: 200px;
+  min-height: 150px;
+  max-width: 600px;
+  max-height: 800px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.diagram-card .card-body {
+  position: relative;
+}
+
+/* Resize handle */
+.resizer-handle {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  width: 16px;
+  height: 16px;
+  cursor: se-resize;
+  opacity: 0.6;
+  color: var(--fg-muted);
+}
+
+.diagram-card:hover .resizer-handle {
+  opacity: 1;
+}
+
+.resizer-handle:active {
+  cursor: grab;
+}
+
 .diagram-card:hover {
   border-color: var(--accent);
 }

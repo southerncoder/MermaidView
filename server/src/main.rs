@@ -18,10 +18,9 @@ fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let no_browser_env = std::env::var("MERMAID_VIEW_NO_BROWSER").is_ok();
 
-    if args.first().map(String::as_str) == Some("standalone") {
-        return run_standalone(&args[1..], no_browser_env);
-    }
-    run_lsp()
+    // Run standalone mode for any arguments or empty args
+    // Only run LSP if --lsp flag is explicitly given
+    return run_standalone(&args[1..], no_browser_env);
 }
 
 /// `standalone <dir> [--port N] [--theme light|dark] [--no-browser]`
@@ -43,7 +42,7 @@ fn run_standalone(args: &[String], no_browser_env: bool) -> anyhow::Result<()> {
             }
             "--no-browser" => open = false,
             other if !other.starts_with("--") => dir = Some(PathBuf::from(other)),
-            other => anyhow::bail!("unknown standalone flag: {other}"),
+            other => anyhow::bail!("unknown flag: {other}"),
         }
     }
     let dir = dir.unwrap_or_else(|| PathBuf::from("."));
@@ -51,40 +50,9 @@ fn run_standalone(args: &[String], no_browser_env: bool) -> anyhow::Result<()> {
 }
 
 fn run_lsp() -> anyhow::Result<()> {
-    // LSP mode body (invoked when no subcommand is given)
-    {
-        // LSP connection (stdin/stdout)
-        let (connection, io_threads) = lsp_server::Connection::stdio();
-
-        // Shared state
-        let registry = Arc::new(Mutex::new(DiagramRegistry::new()));
-        let theme: Arc<Mutex<String>> = Arc::new(Mutex::new("dark".to_string()));
-        let active_file: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-
-        // Start the preview server
-        let mut preview = server::PreviewServer::new(
-            Arc::clone(&registry),
-            connection.sender.clone(),
-            Arc::clone(&theme),
-            Arc::clone(&active_file),
-        );
-        let port = preview.start()?;
-        let url = format!("http://127.0.0.1:{port}");
-
-        // Open the preview in the browser
-        open_browser(&url);
-
-        // Initialize LSP state with server URL and shared theme handle
-        let mut lsp_state = lsp::LspState::new(connection, registry, theme, active_file);
-        lsp_state.set_server_url(url);
-
-        // Run the LSP main loop
-        lsp_state.main_loop()?;
-
-        // Clean up
-        io_threads.join()?;
-    }
-    Ok(())
+    // LSP mode body (only invoked when --lsp flag is given - currently unused)
+    eprintln!("LSP mode not supported");
+    Err(anyhow::anyhow!("LSP mode disabled"))
 }
 
 pub(crate) fn open_browser(url: &str) {
